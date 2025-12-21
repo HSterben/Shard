@@ -1,0 +1,394 @@
+# ============================================
+# Dependencies
+# ============================================
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnp
+.pnp.js
+
+# Package manager lock files (optional - some teams commit these)
+# Uncomment if you want to ignore lock files:
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# ============================================
+# Electron Build Outputs
+# ============================================
+# Build directories
+dist/
+**/dist/
+build/
+**/build/
+build-output/
+**/build-output/
+dist-*/
+**/dist-*/
+
+# Electron Builder outputs
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+*.snap
+*.pkg
+*.zip
+*.tar.gz
+*.blockmap
+latest.yml
+latest-mac.yml
+latest-linux.yml
+
+# Electron unpacked directories
+win-unpacked/
+mac-unpacked/
+linux-unpacked/
+**/win-unpacked/
+**/mac-unpacked/
+**/linux-unpacked/
+
+# Electron asar files (packaged app)
+*.asar
+**/*.asar
+
+# Electron builder configs (generated)
+builder-debug.yml
+builder-effective-config.yaml
+**/builder-debug.yml
+**/builder-effective-config.yaml
+
+# ============================================
+# Environment & Secrets
+# ============================================
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env.*.local
+**/.env
+**/.env.local
+**/.env.*
+!.env.example
+**/.env.example
+
+# API Keys & Secrets
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+**/secrets/
+
+# ============================================
+# Logs
+# ============================================
+logs/
+**/logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.log.*
+
+# ============================================
+# Database
+# ============================================
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# MongoDB
+data/
+**/data/
+mongodb-data/
+
+# PostgreSQL
+*.sql
+pgdata/
+
+# ============================================
+# Testing
+# ============================================
+coverage/
+**/coverage/
+.nyc_output/
+**/.nyc_output/
+*.lcov
+.jest/
+**/.jest/
+
+# ============================================
+# IDE & Editors
+# ============================================
+# VSCode
+.vscode/
+**/.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# JetBrains IDEs
+.idea/
+**/.idea/
+*.iml
+*.iws
+*.ipr
+
+# Visual Studio
+.vs/
+**/.vs/
+*.sln
+*.VC.db
+*.VC.VC.opendb
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+*.xcuserstate
+project.xcworkspace/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.vim/
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ============================================
+# OS Files
+# ============================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ============================================
+# Temporary Files
+# ============================================
+*.tmp
+*.temp
+*.bak
+*.backup
+*.swp
+*.swo
+.cache/
+**/.cache/
+tmp/
+**/tmp/
+temp/
+**/temp/
+
+# ============================================
+# Electron Specific
+# ============================================
+# Electron API definitions (generated)
+electron-api.json
+electron.d.ts
+
+# Electron reloader cache
+.reloader/
+
+# Electron devtools
+.devtools/
+
+# ============================================
+# Backend Specific
+# ============================================
+# Uploads & user content
+uploads/
+**/uploads/
+public/uploads/
+static/uploads/
+
+# Session files
+sessions/
+**/sessions/
+
+# Compiled files
+*.class
+*.dll
+*.so
+*.dylib
+
+# ============================================
+# TypeScript (if you add it later)
+# ============================================
+*.tsbuildinfo
+**/*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# ============================================
+# Build Tools
+# ============================================
+.eslintcache
+**/.eslintcache
+.stylelintcache
+**/.stylelintcache
+.parcel-cache/
+**/.parcel-cache/
+.next/
+**/.next/
+out/
+**/out/
+.nuxt/
+**/.nuxt/
+.vuepress/dist/
+**/.vuepress/dist/
+
+# ============================================
+# Misc
+# ============================================
+# npm
+.npm/
+npm/
+npm-debug.log
+SHASUMS256.txt
+
+# Yarn
+.yarn/
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# pnpm
+.pnpm-store/
+.pnpm-debug.log
+
+# Optional: Keep package-lock.json (uncomment to ignore)
+# package-lock.json
+# **/package-lock.json
+
+# Optional: Keep yarn.lock (uncomment to ignore)
+# yarn.lock
+# **/yarn.lock
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Directory for instrumented libs generated by jscoverage/JSCover
+lib-cov
+
+# Coverage directory used by tools like istanbul
+coverage
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env.test
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# yarn v2
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# ============================================
+# Project Specific
+# ============================================
+# Your specific build outputs (already have dist/, but adding for clarity)
+dist-*/
+build-output/
+
+# Generated files
+compile_commands.json
+.gclient_done
+.tags*
+spec/.hash
+patches/mtime-cache.json
+.depshash

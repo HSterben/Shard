@@ -1,0 +1,27 @@
+END USER LICENSE AGREEMENT (EULA)
+
+RedHand AI Assistant
+
+1. GRANT OF LICENSE
+   Subject to payment of subscription fees, you are granted a limited,
+   non-exclusive, non-transferable license to use this software.
+
+2. RESTRICTIONS
+   - You may NOT redistribute, sell, or sublicense this software
+   - You may NOT reverse engineer or decompile
+   - You may NOT remove copyright notices
+   - Subscription is required for continued use
+
+3. SUBSCRIPTION TERMS
+   - Subscription fees are charged monthly/annually
+   - Access is revoked if subscription lapses
+   - No refunds for partial periods
+
+4. INTELLECTUAL PROPERTY
+   All rights, title, and interest remain with Sterben
+
+5. TERMINATION
+   This license terminates if you violate any terms
+
+By using this software, you agree to these terms.
+

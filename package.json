@@ -1,0 +1,11 @@
+{
+  "name": "shard",
+  "version": "1.0.0",
+  "description": "AI-powered application",
+  "license": "UNLICENSED",
+  "private": true,
+  "author": "Sterben",
+  "devDependencies": {
+    "electron": "^39.2.7"
+  }
+}
