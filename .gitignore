@@ -278,6 +278,8 @@ sessions/
 *.tsbuildinfo
 **/*.tsbuildinfo
 tsconfig.tsbuildinfo
+next-env.d.ts
+**/next-env.d.ts
 
 # ============================================
 # Build Tools
@@ -292,10 +294,14 @@ tsconfig.tsbuildinfo
 **/.next/
 out/
 **/out/
+.vite/
+**/.vite/
 .nuxt/
 **/.nuxt/
 .vuepress/dist/
 **/.vuepress/dist/
+.vercel/
+**/.vercel/
 
 # ============================================
 # Misc
@@ -384,7 +390,6 @@ jspm_packages/
 # Your specific build outputs (already have dist/, but adding for clarity)
 dist-*/
 build-output/
-
 # Generated files
 compile_commands.json
 .gclient_done

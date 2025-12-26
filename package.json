@@ -1,11 +1,19 @@
 {
   "name": "shard",
   "version": "1.0.0",
-  "description": "AI-powered application",
+  "description": "AI-powered application monorepo",
   "license": "UNLICENSED",
   "private": true,
   "author": "Sterben",
+  "scripts": {
+    "dev": "concurrently \"npm run dev --prefix backend\" \"npm run start --prefix electron\"",
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:electron": "npm run start --prefix electron",
+    "build": "npm run build --prefix backend && npm run package --prefix electron",
+    "build:backend": "npm run build --prefix backend",
+    "build:electron": "npm run package --prefix electron"
+  },
   "devDependencies": {
-    "electron": "^39.2.7"
+    "concurrently": "^9.1.2"
   }
 }
