@@ -48,6 +48,10 @@ module.exports = {
             name: 'main_window',
             config: 'vite.renderer.config.mjs',
           },
+          {
+            name: 'message_window',
+            config: 'vite.renderer.config.mjs',
+          },
         ],
       },
     },

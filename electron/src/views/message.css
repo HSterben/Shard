@@ -1,0 +1,74 @@
+/* Theme Color Variables - Modern Black and Crystal Blue */
+:root {
+  --color-bg-primary: #000000;
+  --color-bg-secondary: #0a0a0a;
+  --color-bg-elevated: #111111;
+  --color-accent-primary: #00d4ff;
+  --color-accent-secondary: #0099cc;
+  --color-accent-hover: #00e6ff;
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #666666;
+  --color-border: #1a1a1a;
+  --color-border-accent: rgba(0, 212, 255, 0.2);
+  --color-shadow: rgba(0, 0, 0, 0.5);
+  --color-glow: rgba(0, 212, 255, 0.15);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  width: 100vw;
+  padding: 20px;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.message-container {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-accent);
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 
+    0 8px 32px var(--color-shadow),
+    0 0 0 0.5px rgba(0, 212, 255, 0.1),
+    0 0 24px var(--color-glow);
+  backdrop-filter: blur(12px);
+  color: var(--color-text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+  word-wrap: break-word;
+  max-width: 100%;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+}
+
+.message-container.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.message-content {
+  white-space: pre-wrap;
+}
+
+

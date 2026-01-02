@@ -1,9 +1,7 @@
+// Main renderer entry point - Chat Bubble View
 import {createRoot} from 'react-dom/client'
-
-const App = () => {
-  return <h1>Hello from React!</h1>
-}
+import ChatBubbleView from './views/ChatBubbleView'
 
 const container = document.getElementById('root')
 const root = createRoot(container)
-root.render(<App />)
+root.render(<ChatBubbleView />)
