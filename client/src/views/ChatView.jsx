@@ -1,5 +1,7 @@
 // View: Chat display UI
 import { useState, useEffect, useRef } from 'react';
+import { ConvexClient } from 'convex/browser';
+import { api } from '../../../backend/convex/_generated/api';
 import './ChatView.css';
 
 const ChatView = () => {
@@ -8,11 +10,18 @@ const ChatView = () => {
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef(null);
   const conversationContext = useRef([]); // Store conversation history for context
+  
+  // Initialize Convex client
+  // TODO: Replace with your actual Convex deployment URL
+  // You can get this from: backend/.env.local or Convex dashboard
+  // NOTE: The Convex action requires authentication. You'll need to set up auth tokens
+  // For Electron, you may need to use setAuth() method on the ConvexClient
+  // Example: convex.current.setAuth("your-auth-token")
+  const CONVEX_URL = 'https://elegant-greyhound-73.convex.cloud';
+  const convex = useRef(new ConvexClient(CONVEX_URL));
 
-  // Function to call OpenRouter API
+  // Function to call OpenRouter API via Convex
   const askOpenRouter = async (message, model = 'mistralai/devstral-2512:free', options = {}) => {
-    const apiUrl = 'http://localhost:3000';
-    
     // Build messages array with conversation context
     const contextMessages = conversationContext.current.map(msg => ({
       role: msg.sender === 'user' ? 'user' : 'assistant',
@@ -25,26 +34,21 @@ const ChatView = () => {
       content: message
     });
 
-    const requestBody = {
+    // Call Convex action
+    const response = await convex.current.action(api.openrouter.sendMessage, {
       messages: contextMessages,
       model,
-      ...options,
-    };
-
-    const response = await fetch(`${apiUrl}/api/openrouter`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
+      systemInstruction: options.systemInstruction,
+      temperature: options.temperature,
+      maxTokens: options.maxTokens,
+      topP: options.topP,
+      frequencyPenalty: options.frequencyPenalty,
+      presencePenalty: options.presencePenalty,
+      stop: options.stop,
+      stream: options.stream,
     });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || `HTTP error! status: ${response.status}`);
-    }
-
-    return await response.json();
+    return response;
   };
 
   // Get AI response for a message
@@ -71,12 +75,21 @@ const ChatView = () => {
 
       setMessages(prev => [...prev, aiMessage]);
       
-      // Update conversation context
-      conversationContext.current = [
-        ...conversationContext.current,
-        { text: userMessage, sender: 'user' },
-        { text: response.content, sender: 'ai' }
-      ];
+      // Update conversation context with the full conversation history from response
+      // The Convex action returns updated messages including the new assistant response
+      if (response.messages) {
+        conversationContext.current = response.messages.map(msg => ({
+          text: msg.content,
+          sender: msg.role === 'user' ? 'user' : msg.role === 'assistant' ? 'ai' : 'system'
+        }));
+      } else {
+        // Fallback to manual update if messages not provided
+        conversationContext.current = [
+          ...conversationContext.current,
+          { text: userMessage, sender: 'user' },
+          { text: response.content, sender: 'ai' }
+        ];
+      }
     } catch (error) {
       console.error('Error getting AI response:', error);
       // Add error message
