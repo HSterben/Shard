@@ -231,7 +231,7 @@ ipcMain.handle("send-message", async (event, message) => {
 
   const messageWindow = new BrowserWindow({
     width: screenWidth / 2,
-    height: screenHeight / 2,
+    height: screenHeight * 0.6,
     frame: false,
     transparent: false,
     backgroundColor: '#000000',

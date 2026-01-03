@@ -5,6 +5,7 @@ import './ChatView.css';
 const ChatView = () => {
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef(null);
   const conversationContext = useRef([]); // Store conversation history for context
 
@@ -142,27 +143,50 @@ const ChatView = () => {
     });
   };
 
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const messageText = inputValue.trim();
+    
+    if (!messageText || isLoading) return;
+    
+    // Clear input immediately
+    setInputValue('');
+    
+    // Add user message to UI
+    const userMessage = {
+      id: Date.now(),
+      text: messageText,
+      sender: 'user',
+      timestamp: new Date()
+    };
+    
+    setMessages(prev => [...prev, userMessage]);
+    
+    // Update conversation context
+    conversationContext.current = [
+      ...conversationContext.current,
+      { text: messageText, sender: 'user' }
+    ];
+    
+    // Get AI response
+    await getAIResponse(messageText);
+  };
+
   return (
     <div className="chat-view">
       <div className="chat-title-bar">
         <span className="chat-title-text">12345</span>
-      </div>
-      <header className="chat-header">
-        <div className="chat-header-title">
-          <div className="chat-header-logo">S</div>
-          <span className="chat-header-text">Shard</span>
-        </div>
         <button 
           className="chat-close-button"
           onClick={handleClose}
           aria-label="Close chat"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18"></line>
             <line x1="6" y1="6" x2="18" y2="18"></line>
           </svg>
         </button>
-      </header>
+      </div>
       
       <div className="chat-messages">
         {messages.length === 0 ? (
@@ -186,6 +210,29 @@ const ChatView = () => {
         )}
         <div ref={messagesEndRef} />
       </div>
+      
+      <form className="chat-input-container" onSubmit={handleSubmit}>
+        <input
+          type="text"
+          className="chat-input-field"
+          placeholder="Type your message..."
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          disabled={isLoading}
+          autoFocus
+        />
+        <button
+          type="submit"
+          className="chat-input-submit"
+          disabled={!inputValue.trim() || isLoading}
+          aria-label="Send message"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </form>
     </div>
   );
 };
