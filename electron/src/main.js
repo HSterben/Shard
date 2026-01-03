@@ -256,28 +256,17 @@ ipcMain.handle("send-message", async (event, message) => {
   if (MESSAGE_WINDOW_VITE_DEV_SERVER_URL || MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     const devServerUrl = MESSAGE_WINDOW_VITE_DEV_SERVER_URL || MAIN_WINDOW_VITE_DEV_SERVER_URL;
     const url = `${devServerUrl}/chat.html?data=${encodedMessage}`;
-    // console.log("Loading message window from dev server:", url);
     messageWindow.loadURL(url);
   } else {
     const filePath = path.join(__dirname, `../renderer/${MESSAGE_WINDOW_VITE_NAME}/chat.html`);
-    // console.log("Loading message window from file:", filePath);
     messageWindow.loadFile(filePath, { query: { data: encodedMessage } });
   }
 
   // Show window when ready
   messageWindow.once("ready-to-show", () => {
-    // console.log("Message window ready, showing...");
     messageWindow.show();
     messageWindow.focus();
-    // Open DevTools for debugging (remove in production)
-    // messageWindow.webContents.openDevTools();
   });
-
-  // Clean up on close
-  // messageWindow.on("closed", () => {
-  //   messageWindow = null;
-  //   currentMessage = null;
-  // });
 
   return { success: true };
 });
@@ -337,6 +326,3 @@ app.on("will-quit", () => {
     messageWindow = null;
   }
 });
-
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and import them here.

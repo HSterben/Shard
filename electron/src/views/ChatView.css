@@ -219,3 +219,24 @@ html, body {
   font-size: 14px;
 }
 
+.message-loading {
+  opacity: 0.7;
+}
+
+.loading-dots::after {
+  content: '...';
+  animation: loadingDots 1.5s steps(4, end) infinite;
+}
+
+@keyframes loadingDots {
+  0%, 20% {
+    content: '.';
+  }
+  40% {
+    content: '..';
+  }
+  60%, 100% {
+    content: '...';
+  }
+}
+

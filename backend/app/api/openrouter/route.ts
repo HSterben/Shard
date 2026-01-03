@@ -2,6 +2,21 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sendToOpenRouter } from '@/lib/openrouter';
 import type { OpenRouterRequest } from '@/types/openrouter';
 
+// CORS headers helper
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+// Handle preflight OPTIONS request
+export async function OPTIONS() {
+  return new NextResponse(null, { 
+    status: 204,
+    headers: corsHeaders 
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body: OpenRouterRequest = await request.json();
@@ -10,7 +25,10 @@ export async function POST(request: NextRequest) {
     if (!body.model) {
       return NextResponse.json(
         { error: 'Model is required' },
-        { status: 400 }
+        { 
+          status: 400,
+          headers: corsHeaders 
+        }
       );
     }
 
@@ -18,7 +36,10 @@ export async function POST(request: NextRequest) {
     if (!body.message && (!body.messages || body.messages.length === 0)) {
       return NextResponse.json(
         { error: 'Either message or messages array is required' },
-        { status: 400 }
+        { 
+          status: 400,
+          headers: corsHeaders 
+        }
       );
     }
 
@@ -37,20 +58,26 @@ export async function POST(request: NextRequest) {
       stream: body.stream,
     });
 
-    return NextResponse.json(response);
+    return NextResponse.json(response, { headers: corsHeaders });
   } catch (error) {
     console.error('OpenRouter API Error:', error);
     
     if (error instanceof Error) {
       return NextResponse.json(
         { error: error.message },
-        { status: 500 }
+        { 
+          status: 500,
+          headers: corsHeaders 
+        }
       );
     }
 
     return NextResponse.json(
       { error: 'Internal server error' },
-      { status: 500 }
+      { 
+        status: 500,
+        headers: corsHeaders 
+      }
     );
   }
 }
@@ -61,6 +88,6 @@ export async function GET() {
     status: 'ok',
     service: 'OpenRouter API',
     message: 'API is running',
-  });
+  }, { headers: corsHeaders });
 }
 
