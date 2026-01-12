@@ -7,18 +7,114 @@ import {
   nativeImage,
   screen,
   ipcMain,
+  shell,
 } from "electron";
 import path from "node:path";
 import started from "electron-squirrel-startup";
+import Store from "electron-store";
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
   app.quit();
 }
 
+// Initialize secure store for auth tokens
+const store = new Store({
+  name: "shard-auth",
+  encryptionKey: "shard-secure-storage-key-2024",
+});
+
+// Auth configuration
+// Note: .convex.cloud is for queries/mutations, .convex.site is for HTTP endpoints
+const CONVEX_HTTP_URL = "https://elegant-greyhound-73.convex.site";
+const AUTH_LOGIN_URL = `${CONVEX_HTTP_URL}/auth/login`;
+
 let mainWindow = null;
 let tray = null;
 let isToggling = false; // Prevent double-toggle
+
+// Register custom protocol for OAuth callback
+if (process.defaultApp) {
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient("shard", process.execPath, [
+      path.resolve(process.argv[1]),
+    ]);
+  }
+} else {
+  app.setAsDefaultProtocolClient("shard");
+}
+
+// Handle deep link on Windows/Linux (single instance)
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (event, commandLine) => {
+    console.log("Second instance detected, commandLine:", commandLine);
+    // Someone tried to run a second instance, handle the deep link
+    const url = commandLine.find((arg) => arg.startsWith("shard://"));
+    if (url) {
+      console.log("Found shard:// URL in second instance:", url);
+      handleAuthCallback(url);
+    }
+
+    // Focus main window if exists
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
+// Handle deep link on macOS
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  handleAuthCallback(url);
+});
+
+// Process auth callback URL
+function handleAuthCallback(url) {
+  console.log("Handling auth callback URL:", url);
+  try {
+    const parsedUrl = new URL(url);
+    // For shard://auth/success, hostname="auth", pathname="/success"
+    // Combine them to get the full path
+    const fullPath = parsedUrl.hostname + parsedUrl.pathname;
+    console.log("Parsed path:", fullPath);
+
+    if (fullPath === "auth/success") {
+      const token = parsedUrl.searchParams.get("token");
+      const refresh = parsedUrl.searchParams.get("refresh");
+      console.log("Token received:", token ? "yes" : "no");
+
+      if (token) {
+        // Store tokens securely
+        store.set("accessToken", token);
+        if (refresh) {
+          store.set("refreshToken", refresh);
+        }
+        console.log("Token stored successfully");
+
+        // Notify all windows of successful auth
+        BrowserWindow.getAllWindows().forEach((win) => {
+          win.webContents.send("auth-success", { token });
+        });
+      }
+    } else if (fullPath === "auth/error") {
+      const message =
+        parsedUrl.searchParams.get("message") || "Authentication failed";
+      console.log("Auth error:", message);
+
+      // Notify all windows of auth error
+      BrowserWindow.getAllWindows().forEach((win) => {
+        win.webContents.send("auth-error", { message });
+      });
+    }
+  } catch (err) {
+    console.error("Error handling auth callback:", err);
+  }
+}
 
 // Fade animation functions
 const fadeIn = (window, callback) => {
@@ -194,6 +290,19 @@ const createTray = () => {
       type: "separator",
     },
     {
+      label: "Logout",
+      click: () => {
+        store.delete("accessToken");
+        store.delete("refreshToken");
+        BrowserWindow.getAllWindows().forEach((win) => {
+          win.webContents.send("auth-success", { token: null });
+        });
+      },
+    },
+    {
+      type: "separator",
+    },
+    {
       label: "Quit",
       click: () => {
         app.isQuitting = true;
@@ -209,7 +318,25 @@ const createTray = () => {
   tray.on("click", toggleWindow);
 };
 
-// IPC Handlers
+// Auth IPC Handlers
+ipcMain.handle("get-auth-token", async () => {
+  const token = store.get("accessToken");
+  return token || null;
+});
+
+ipcMain.handle("open-login", async () => {
+  // Open the login URL in the system default browser
+  shell.openExternal(AUTH_LOGIN_URL);
+  return { success: true };
+});
+
+ipcMain.handle("logout", async () => {
+  store.delete("accessToken");
+  store.delete("refreshToken");
+  return { success: true };
+});
+
+// Existing IPC Handlers
 ipcMain.handle("send-message", async (event, message) => {
   // Hide the chat window
   if (mainWindow && mainWindow.isVisible()) {
@@ -224,17 +351,12 @@ ipcMain.handle("send-message", async (event, message) => {
   const { width: screenWidth, height: screenHeight } =
     primaryDisplay.workAreaSize;
 
-  // Calculate size for message window (slightly larger than chat bubble)
-  // const { width: chatWidth } = calculateWindowSize(screenWidth);
-  // const messageWidth = Math.min(chatWidth * 1.5, 600);
-  // const messageHeight = 200;
-
   const messageWindow = new BrowserWindow({
     width: screenWidth / 2,
     height: screenHeight * 0.6,
     frame: false,
     transparent: false,
-    backgroundColor: '#000000',
+    backgroundColor: "#000000",
     resizable: true,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -249,16 +371,17 @@ ipcMain.handle("send-message", async (event, message) => {
   // Encode message to pass as query parameter
   const encodedMessage = encodeURIComponent(JSON.stringify({ message }));
 
-
   // Load the message page HTML file with message as query parameter
-  // In dev mode, use the dev server (fallback to main window's if message window's isn't available)
-  // In production, use the message window's built files
   if (MESSAGE_WINDOW_VITE_DEV_SERVER_URL || MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    const devServerUrl = MESSAGE_WINDOW_VITE_DEV_SERVER_URL || MAIN_WINDOW_VITE_DEV_SERVER_URL;
+    const devServerUrl =
+      MESSAGE_WINDOW_VITE_DEV_SERVER_URL || MAIN_WINDOW_VITE_DEV_SERVER_URL;
     const url = `${devServerUrl}/chat.html?data=${encodedMessage}`;
     messageWindow.loadURL(url);
   } else {
-    const filePath = path.join(__dirname, `../renderer/${MESSAGE_WINDOW_VITE_NAME}/chat.html`);
+    const filePath = path.join(
+      __dirname,
+      `../renderer/${MESSAGE_WINDOW_VITE_NAME}/chat.html`
+    );
     messageWindow.loadFile(filePath, { query: { data: encodedMessage } });
   }
 
@@ -299,6 +422,15 @@ app.whenReady().then(() => {
 
   // Register global shortcut Ctrl+Alt+I to show/hide window
   globalShortcut.register("CommandOrControl+Alt+I", toggleWindow);
+
+  // Handle deep link URL passed on initial launch (Windows/Linux)
+  // This happens when the app wasn't running and user clicks the protocol link
+  const protocolUrl = process.argv.find((arg) => arg.startsWith("shard://"));
+  if (protocolUrl) {
+    console.log("Found protocol URL in argv:", protocolUrl);
+    // Delay slightly to ensure windows are ready
+    setTimeout(() => handleAuthCallback(protocolUrl), 500);
+  }
 
   // On OS X it's common to re-create a window in the app when the
   // dock icon is clicked and there are no other windows open.

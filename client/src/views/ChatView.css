@@ -309,3 +309,80 @@ html, body {
   cursor: not-allowed;
 }
 
+/* Authentication UI Styles */
+.chat-auth-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  -webkit-app-region: no-drag;
+}
+
+.chat-auth-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+  color: var(--color-text-primary);
+}
+
+.chat-auth-content svg {
+  color: var(--color-accent-primary);
+  opacity: 0.8;
+}
+
+.chat-auth-content h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.chat-auth-content p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.chat-login-button {
+  margin-top: 8px;
+  padding: 12px 32px;
+  background: var(--color-accent-primary);
+  border: none;
+  border-radius: 12px;
+  color: var(--color-bg-primary);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.chat-login-button:hover {
+  background: var(--color-accent-hover);
+  transform: scale(1.02);
+  box-shadow: 0 4px 16px var(--color-glow);
+}
+
+.chat-login-button:active {
+  transform: scale(0.98);
+}
+
+/* Loading Spinner */
+.chat-loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-accent-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
