@@ -58,8 +58,25 @@ const ChatView = () => {
     });
   }, []);
 
+  // Helper to refresh auth and update Convex client
+  const refreshAndRetry = async () => {
+    try {
+      const result = await window.electronAPI.refreshAuthToken();
+      if (result.success && result.token) {
+        setAuthToken(result.token);
+        convex.current.setAuth(async () => result.token);
+        return true;
+      }
+    } catch (err) {
+      console.error('Failed to refresh token:', err);
+    }
+    // Refresh failed - user needs to log in again
+    setIsAuthenticated(false);
+    return false;
+  };
+
   // Function to call OpenRouter API via Convex
-  const askOpenRouter = async (message, model = 'mistralai/devstral-2512:free', options = {}) => {
+  const askOpenRouter = async (message, model = 'mistralai/devstral-2512:free', options = {}, isRetry = false) => {
     // Build messages array with conversation context
     const contextMessages = conversationContext.current.map(msg => ({
       role: msg.sender === 'user' ? 'user' : 'assistant',
@@ -72,21 +89,35 @@ const ChatView = () => {
       content: message
     });
 
-    // Call Convex action
-    const response = await convex.current.action(api.openrouter.sendMessage, {
-      messages: contextMessages,
-      model,
-      systemInstruction: options.systemInstruction,
-      temperature: options.temperature,
-      maxTokens: options.maxTokens,
-      topP: options.topP,
-      frequencyPenalty: options.frequencyPenalty,
-      presencePenalty: options.presencePenalty,
-      stop: options.stop,
-      stream: options.stream,
-    });
+    try {
+      // Call Convex action
+      const response = await convex.current.action(api.openrouter.sendMessage, {
+        messages: contextMessages,
+        model,
+        systemInstruction: options.systemInstruction,
+        temperature: options.temperature,
+        maxTokens: options.maxTokens,
+        topP: options.topP,
+        frequencyPenalty: options.frequencyPenalty,
+        presencePenalty: options.presencePenalty,
+        stop: options.stop,
+        stream: options.stream,
+      });
 
-    return response;
+      return response;
+    } catch (error) {
+      // Check if it's an authentication error and we haven't retried yet
+      if (!isRetry && error.message && error.message.includes('Authentication required')) {
+        console.log('Auth error detected, attempting token refresh...');
+        const refreshed = await refreshAndRetry();
+        if (refreshed) {
+          // Retry the request with the new token
+          return askOpenRouter(message, model, options, true);
+        }
+      }
+      // Re-throw if not an auth error or retry failed
+      throw error;
+    }
   };
 
   // Get AI response for a message

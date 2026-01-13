@@ -28,6 +28,75 @@ const store = new Store({
 // Note: .convex.cloud is for queries/mutations, .convex.site is for HTTP endpoints
 const CONVEX_HTTP_URL = "https://elegant-greyhound-73.convex.site";
 const AUTH_LOGIN_URL = `${CONVEX_HTTP_URL}/auth/login`;
+const AUTH_REFRESH_URL = `${CONVEX_HTTP_URL}/auth/refresh`;
+
+// Helper: Decode JWT and check if expired
+function isTokenExpired(token) {
+  if (!token) return true;
+  try {
+    // JWT is base64url encoded: header.payload.signature
+    const parts = token.split(".");
+    if (parts.length !== 3) return true;
+
+    // Decode payload (middle part)
+    const payload = JSON.parse(
+      Buffer.from(parts[1], "base64url").toString("utf8")
+    );
+
+    // Check expiration (exp is in seconds, Date.now() is in ms)
+    // Add 60 second buffer to refresh before actual expiry
+    const expirationTime = payload.exp * 1000;
+    const bufferMs = 60 * 1000; // 1 minute buffer
+    return Date.now() >= expirationTime - bufferMs;
+  } catch (err) {
+    console.error("Error decoding token:", err);
+    return true;
+  }
+}
+
+// Helper: Refresh the access token using refresh token
+async function refreshAccessToken() {
+  const refreshToken = store.get("refreshToken");
+  if (!refreshToken) {
+    console.log("No refresh token available");
+    return null;
+  }
+
+  try {
+    console.log("Attempting to refresh access token...");
+    const response = await fetch(AUTH_REFRESH_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (!response.ok) {
+      console.error("Token refresh failed:", response.status);
+      // Clear invalid tokens
+      store.delete("accessToken");
+      store.delete("refreshToken");
+      return null;
+    }
+
+    const data = await response.json();
+    console.log("Token refresh successful");
+
+    // Store new tokens
+    if (data.access_token) {
+      store.set("accessToken", data.access_token);
+    }
+    if (data.refresh_token) {
+      store.set("refreshToken", data.refresh_token);
+    }
+
+    return data.access_token;
+  } catch (err) {
+    console.error("Error refreshing token:", err);
+    return null;
+  }
+}
 
 let mainWindow = null;
 let tray = null;
@@ -320,8 +389,28 @@ const createTray = () => {
 
 // Auth IPC Handlers
 ipcMain.handle("get-auth-token", async () => {
-  const token = store.get("accessToken");
-  return token || null;
+  let token = store.get("accessToken");
+
+  // Check if token exists and is not expired
+  if (token && !isTokenExpired(token)) {
+    return token;
+  }
+
+  // Token is expired or missing - try to refresh
+  if (token || store.get("refreshToken")) {
+    console.log("Access token expired, attempting refresh...");
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      // Notify all windows of the new token
+      BrowserWindow.getAllWindows().forEach((win) => {
+        win.webContents.send("auth-success", { token: newToken });
+      });
+      return newToken;
+    }
+  }
+
+  // No valid token and refresh failed
+  return null;
 });
 
 ipcMain.handle("open-login", async () => {
@@ -334,6 +423,18 @@ ipcMain.handle("logout", async () => {
   store.delete("accessToken");
   store.delete("refreshToken");
   return { success: true };
+});
+
+ipcMain.handle("refresh-auth-token", async () => {
+  const newToken = await refreshAccessToken();
+  if (newToken) {
+    // Notify all windows of the new token
+    BrowserWindow.getAllWindows().forEach((win) => {
+      win.webContents.send("auth-success", { token: newToken });
+    });
+    return { success: true, token: newToken };
+  }
+  return { success: false, token: null };
 });
 
 // Existing IPC Handlers
