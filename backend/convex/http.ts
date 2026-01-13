@@ -1,5 +1,6 @@
 import { httpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
+import { api } from './_generated/api';
 
 const http = httpRouter();
 
@@ -186,6 +187,244 @@ http.route({
         'Access-Control-Allow-Headers': 'Content-Type',
       },
     });
+  }),
+});
+
+// Helper: Verify WorkOS webhook signature
+// WorkOS signs: HMAC-SHA256(secret, "{timestamp}.{raw_body}")
+async function verifyWebhookSignature(
+  rawBody: string,
+  signature: string,
+  timestamp: string,
+  secret: string
+): Promise<boolean> {
+  if (!signature || !timestamp || !secret) {
+    return false;
+  }
+
+  try {
+    // Check timestamp tolerance (5 minutes) to prevent replay attacks
+    // WorkOS sends timestamp in milliseconds, convert to seconds for comparison
+    const currentTime = Math.floor(Date.now() / 1000);
+    const requestTimeMs = parseInt(timestamp, 10);
+    const requestTimeSeconds = Math.floor(requestTimeMs / 1000);
+    const tolerance = 300; // 5 minutes in seconds
+
+    if (isNaN(requestTimeMs) || Math.abs(currentTime - requestTimeSeconds) > tolerance) {
+      console.error('Webhook timestamp outside tolerance window');
+      console.error('Current time (s):', currentTime);
+      console.error('Request time (ms):', requestTimeMs, '-> (s):', requestTimeSeconds);
+      console.error('Difference:', Math.abs(currentTime - requestTimeSeconds), 'seconds');
+      return false;
+    }
+
+    // Reconstruct the signed payload: "{timestamp_ms}.{raw_body}"
+    // WorkOS uses milliseconds in the signed payload
+    const signedPayload = `${timestamp}.${rawBody}`;
+
+    // Import crypto for HMAC
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(secret);
+    const messageData = encoder.encode(signedPayload);
+
+    // Use Web Crypto API for HMAC-SHA256
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      keyData,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+
+    const signatureBuffer = await crypto.subtle.sign('HMAC', cryptoKey, messageData);
+    const computedSignature = Array.from(new Uint8Array(signatureBuffer))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    // Debug logging (remove in production)
+    console.log('Signature verification debug:');
+    console.log('  Signed payload:', signedPayload.substring(0, 100) + '...');
+    console.log('  Received signature:', signature.substring(0, 20) + '...');
+    console.log('  Computed signature:', computedSignature.substring(0, 20) + '...');
+    console.log('  Signatures match:', signature === computedSignature);
+
+    // Constant-time comparison to prevent timing attacks
+    if (signature.length !== computedSignature.length) {
+      console.log('  Signature length mismatch:', signature.length, 'vs', computedSignature.length);
+      return false;
+    }
+
+    let result = 0;
+    for (let i = 0; i < signature.length; i++) {
+      result |= signature.charCodeAt(i) ^ computedSignature.charCodeAt(i);
+    }
+
+    const matches = result === 0;
+    if (!matches) {
+      console.log('  Signature bytes differ');
+    }
+    return matches;
+  } catch (error) {
+    console.error('Error verifying webhook signature:', error);
+    return false;
+  }
+}
+
+// WorkOS webhook endpoint
+http.route({
+  path: '/webhooks/workos',
+  method: 'POST',
+  handler: httpAction(async (ctx, req) => {
+    try {
+      // Get the raw request body as text
+      const rawBody = await req.text();
+
+      // Debug: Log all headers to see what we're receiving
+      const allHeaders: Record<string, string> = {};
+      req.headers.forEach((value, key) => {
+        allHeaders[key] = value;
+      });
+      console.log('Received headers:', JSON.stringify(allHeaders, null, 2));
+
+      // WorkOS sends signature in format: "t={timestamp}, v1={signature}"
+      const signatureHeader =
+        req.headers.get('workos-signature') ||
+        req.headers.get('WorkOS-Signature') ||
+        req.headers.get('WORKOS-SIGNATURE') ||
+        req.headers.get('x-workos-signature') ||
+        req.headers.get('X-WorkOS-Signature');
+
+      if (!signatureHeader) {
+        console.error('Missing workos-signature header');
+        console.error('Available headers:', Object.keys(allHeaders));
+        return new Response(
+          JSON.stringify({
+            error: 'Missing signature',
+            receivedHeaders: Object.keys(allHeaders),
+          }),
+          {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      // Parse the signature header: "t=1768308389638, v1=a5f8b91150b89db13d56c79c552b49f917980407527adb859969309bbd4a98e9"
+      let timestamp: string | null = null;
+      let signature: string | null = null;
+
+      // Extract timestamp (t=...) and signature (v1=...)
+      const timestampMatch = signatureHeader.match(/t=(\d+)/);
+      const signatureMatch = signatureHeader.match(/v1=([a-f0-9]+)/);
+
+      if (timestampMatch) {
+        timestamp = timestampMatch[1];
+      }
+      if (signatureMatch) {
+        signature = signatureMatch[1];
+      }
+
+      if (!signature || !timestamp) {
+        console.error('Failed to parse workos-signature header');
+        console.error('Signature header value:', signatureHeader);
+        return new Response(
+          JSON.stringify({
+            error: 'Invalid signature format',
+            signatureHeader: signatureHeader,
+          }),
+          {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      // Get the webhook secret from environment
+      const webhookSecret = process.env.WORKOS_SIGNATURE_SECRET;
+      if (!webhookSecret) {
+        console.error('WORKOS_SIGNATURE_SECRET not configured');
+        return new Response(JSON.stringify({ error: 'Server configuration error' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // WorkOS signs with milliseconds in the payload: "{timestamp_ms}.{raw_body}"
+      // But validates timestamp tolerance in seconds
+      const timestampMs = timestamp; // Use milliseconds for signature verification
+
+      // Verify the webhook signature (uses milliseconds in signed payload)
+      const isValid = await verifyWebhookSignature(
+        rawBody,
+        signature,
+        timestampMs,
+        webhookSecret
+      );
+
+      if (!isValid) {
+        console.error('Invalid webhook signature');
+        console.error('Received signature:', signature);
+        console.error('Timestamp (ms):', timestampMs);
+        console.error('Raw body length:', rawBody.length);
+        console.error('Raw body preview:', rawBody.substring(0, 100));
+        return new Response(JSON.stringify({ error: 'Invalid signature' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Parse the webhook payload
+      const payload = JSON.parse(rawBody);
+      const event = payload.event;
+      const data = payload.data;
+
+      console.log('Received WorkOS webhook:', event);
+
+      // Handle different event types
+      switch (event) {
+        case 'user.created':
+        case 'user.updated': {
+          // Create or update user
+          await ctx.runMutation(api.users.upsertUser, {
+            workosId: data.id,
+            email: data.email,
+            firstName: data.first_name,
+            lastName: data.last_name,
+            profilePictureUrl: data.profile_picture_url,
+          });
+          break;
+        }
+
+        case 'user.deleted': {
+          // Delete user
+          await ctx.runMutation(api.users.deleteUser, {
+            workosId: data.id,
+          });
+          break;
+        }
+
+        default:
+          console.log('Unhandled webhook event:', event);
+      }
+
+      // Return success response
+      return new Response(JSON.stringify({ received: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (error) {
+      console.error('Webhook processing error:', error);
+      return new Response(
+        JSON.stringify({
+          error: 'Webhook processing failed',
+          message: error instanceof Error ? error.message : 'Unknown error',
+        }),
+        {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
   }),
 });
 

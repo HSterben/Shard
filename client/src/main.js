@@ -459,8 +459,8 @@ ipcMain.handle("send-message", async (event, message) => {
     transparent: false,
     backgroundColor: "#000000",
     resizable: true,
-    alwaysOnTop: true,
-    skipTaskbar: true,
+    alwaysOnTop: false,
+    skipTaskbar: false,
     show: false, // Don't show until ready
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),

@@ -6,21 +6,13 @@ import { v } from 'convex/values';
 // app will continue to work.
 // The schema provides more precise TypeScript types.
 export default defineSchema({
-  conversations: defineTable({
-    userId: v.string(), // User ID from auth
-    messages: v.array(
-      v.object({
-        role: v.union(v.literal('system'), v.literal('user'), v.literal('assistant')),
-        content: v.string(),
-      })
-    ),
-    model: v.string(),
-    usage: v.optional(
-      v.object({
-        promptTokens: v.number(),
-        completionTokens: v.number(),
-        totalTokens: v.number(),
-      })
-    ),
-  }).index('by_user', ['userId']),
+  users: defineTable({
+    workosId: v.string(), // WorkOS user ID (from JWT subject)
+    email: v.optional(v.string()),
+    firstName: v.optional(v.string()),
+    lastName: v.optional(v.string()),
+    profilePictureUrl: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_workos_id', ['workosId']),
 });
