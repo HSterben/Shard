@@ -123,7 +123,7 @@ const ChatView = () => {
   };
 
   // Function to call OpenRouter API with streaming
-  const askOpenRouterStream = async (message = '', files = [], model = 'google/gemma-3-27b-it:free', options = {}, onChunk, isRetry = false) => {
+  const askOpenRouterStream = async (message = '', files = [], model = 'nvidia/nemotron-nano-12b-v2-vl:free', options = {}, onChunk, isRetry = false) => {
     // Build messages array with conversation context
     const contextMessages = conversationContext.current.map(msg => {
       if (msg.images && msg.images.length > 0) {
@@ -188,6 +188,7 @@ const ChatView = () => {
         body: JSON.stringify({
           messages: contextMessages,
           model,
+          systemInstruction: 'Start every sentence with "Hey, I\'m Shard, your personal assistant."',
           temperature: options.temperature,
           maxTokens: options.maxTokens,
           topP: options.topP,
@@ -279,7 +280,7 @@ const ChatView = () => {
   };
 
   // Function to call OpenRouter API via Convex (non-streaming, kept for fallback)
-  const askOpenRouter = async (message = '', files = [], model = 'google/gemma-3-27b-it:free', options = {}, isRetry = false) => {
+  const askOpenRouter = async (message = '', files = [], model = 'nvidia/nemotron-nano-12b-v2-vl:free', options = {}, isRetry = false) => {
     // Build messages array with conversation context
     const contextMessages = conversationContext.current.map(msg => {
       if (msg.images && msg.images.length > 0) {
@@ -327,7 +328,7 @@ const ChatView = () => {
       const response = await convex.current.action(api.openrouter.sendMessage, {
         messages: contextMessages,
         model,
-        //! systemInstruction: options.systemInstruction, TEMP
+        systemInstruction: 'Start every sentence with "Hey, I\'m Shard, your personal assistant."',
         temperature: options.temperature,
         maxTokens: options.maxTokens,
         topP: options.topP,
@@ -361,7 +362,7 @@ const ChatView = () => {
     const aiMessageId = Date.now() + 1;
     const aiMessage = {
       id: aiMessageId,
-      text: '',
+      text: ' ',
       sender: 'ai',
       timestamp: new Date(),
       isStreaming: true
@@ -376,7 +377,7 @@ const ChatView = () => {
       const response = await askOpenRouterStream(
         userMessage,
         files,
-        'google/gemma-3-27b-it:free',
+        'nvidia/nemotron-nano-12b-v2-vl:free',
         {
           temperature: 0.7,
           maxTokens: 500,

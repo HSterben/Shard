@@ -463,7 +463,7 @@ http.route({
 
     try {
       const body = await req.json();
-      const { messages, model, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stop } = body;
+      const { messages, model, systemInstruction, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stop } = body;
 
       if (!model) {
         return new Response(
@@ -477,6 +477,20 @@ http.route({
           JSON.stringify({ error: 'Messages are required' }),
           { status: 400, headers: { 'Content-Type': 'application/json' } }
         );
+      }
+
+      // Process messages and add system instruction if provided
+      let processedMessages = [...messages];
+      
+      // Add system instruction if provided and not already present
+      if (systemInstruction) {
+        const hasSystemMessage = processedMessages.some(msg => msg.role === 'system');
+        if (!hasSystemMessage) {
+          processedMessages.unshift({
+            role: 'system',
+            content: systemInstruction,
+          });
+        }
       }
 
       const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
@@ -493,7 +507,7 @@ http.route({
       // Build payload
       const payload: any = {
         model,
-        messages,
+        messages: processedMessages,
         stream: true,
       };
 

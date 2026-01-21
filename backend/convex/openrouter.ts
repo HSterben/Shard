@@ -123,13 +123,13 @@ async function sendToOpenRouter(
       throw new Error('Either message or messages array must be provided');
     }
 
-    //! Add system instruction if provided TEMP
-    // if (options.systemInstruction) {
-    //   messages.push({
-    //     role: 'system',
-    //     content: options.systemInstruction,
-    //   });
-    // }
+    // Add system instruction if provided
+    if (options.systemInstruction) {
+      messages.push({
+        role: 'system',
+        content: options.systemInstruction,
+      });
+    }
 
     // Add user message
     messages.push({
@@ -286,7 +286,7 @@ export const sendMessage = action({
       )
     ),
     model: v.string(),
-    //! systemInstruction: v.optional(v.string()), TEMP
+    systemInstruction: v.optional(v.string()),
     temperature: v.optional(v.number()),
     maxTokens: v.optional(v.number()),
     topP: v.optional(v.number()),
@@ -353,7 +353,7 @@ export const sendMessage = action({
       message: args.message,
       messages: args.messages,
       model: args.model,
-      //! systemInstruction: args.systemInstruction, TEMP
+      systemInstruction: args.systemInstruction,
       temperature: args.temperature,
       maxTokens: args.maxTokens,
       topP: args.topP,
