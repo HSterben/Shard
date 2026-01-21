@@ -287,12 +287,7 @@ http.route({
       console.log('Received headers:', JSON.stringify(allHeaders, null, 2));
 
       // WorkOS sends signature in format: "t={timestamp}, v1={signature}"
-      const signatureHeader =
-        req.headers.get('workos-signature') ||
-        req.headers.get('WorkOS-Signature') ||
-        req.headers.get('WORKOS-SIGNATURE') ||
-        req.headers.get('x-workos-signature') ||
-        req.headers.get('X-WorkOS-Signature');
+      const signatureHeader = req.headers.get('workos-signature');
 
       if (!signatureHeader) {
         console.error('Missing workos-signature header');
@@ -385,12 +380,13 @@ http.route({
         case 'user.created':
         case 'user.updated': {
           // Create or update user
+          // Convert null values to undefined (Convex validators don't accept null for optional fields)
           await ctx.runMutation(api.users.upsertUser, {
             workosId: data.id,
             email: data.email,
-            firstName: data.first_name,
-            lastName: data.last_name,
-            profilePictureUrl: data.profile_picture_url,
+            firstName: data.first_name ?? undefined,
+            lastName: data.last_name ?? undefined,
+            profilePictureUrl: data.profile_picture_url ?? undefined,
           });
           break;
         }
