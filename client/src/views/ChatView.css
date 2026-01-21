@@ -130,28 +130,42 @@ html, body {
 .chat-messages {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 24px;
   display: flex;
   flex-direction: column;
   gap: 16px;
   scroll-behavior: smooth;
+  position: relative;
+  min-height: 0; /* Important for flex scrolling */
 }
 
+/* Custom Scrollbar */
 .chat-messages::-webkit-scrollbar {
-  width: 6px;
+  width: 8px;
 }
 
 .chat-messages::-webkit-scrollbar-track {
-  background: transparent;
+  background: var(--color-bg-secondary);
+  border-radius: 4px;
 }
 
 .chat-messages::-webkit-scrollbar-thumb {
   background: var(--color-border);
-  border-radius: 3px;
+  border-radius: 4px;
+  border: 1px solid var(--color-bg-secondary);
+  transition: background 0.2s ease;
 }
 
 .chat-messages::-webkit-scrollbar-thumb:hover {
-  background: var(--color-border-accent);
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+}
+
+/* Firefox scrollbar */
+.chat-messages {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) var(--color-bg-secondary);
 }
 
 .message {
@@ -189,6 +203,58 @@ html, body {
   line-height: 1.5;
   font-size: 14px;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.message-text {
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.message-images {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.message-image-container {
+  border-radius: 8px;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.message-image {
+  max-width: 100%;
+  max-height: 400px;
+  object-fit: contain;
+  border-radius: 8px;
+  display: block;
+}
+
+.message-pdf-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--color-bg-secondary);
+  border-radius: 8px;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  min-height: 120px;
+}
+
+.message-pdf-preview svg {
+  color: var(--color-accent-primary);
+}
+
+.message-pdf-preview span {
+  font-size: 12px;
+  text-align: center;
+  word-break: break-all;
 }
 
 .message-user .message-bubble {
@@ -242,6 +308,79 @@ html, body {
   }
 }
 
+.chat-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 24px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  max-height: 120px;
+  overflow-y: auto;
+  -webkit-app-region: no-drag;
+}
+
+.chat-attachment-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 12px;
+  max-width: 200px;
+}
+
+.attachment-preview {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.attachment-pdf-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-accent-primary);
+}
+
+.attachment-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+}
+
+.attachment-remove {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  padding: 0;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.attachment-remove:hover {
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+}
+
+.chat-file-input {
+  display: none;
+}
+
 .chat-input-container {
   display: flex;
   align-items: center;
@@ -251,6 +390,36 @@ html, body {
   background: var(--color-bg-secondary);
   flex-shrink: 0;
   -webkit-app-region: no-drag;
+}
+
+.chat-attach-button {
+  width: 40px;
+  height: 40px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.chat-attach-button:hover:not(:disabled) {
+  background: var(--color-bg-primary);
+  border-color: var(--color-border-accent);
+  color: var(--color-accent-primary);
+}
+
+.chat-attach-button:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.chat-attach-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .chat-input-field {

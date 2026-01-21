@@ -3,9 +3,16 @@ import { v } from 'convex/values';
 import { api } from './_generated/api';
 
 // Types matching the Express backend
+type MessageContent = 
+  | string 
+  | Array<
+      | { type: 'text'; text: string }
+      | { type: 'image_url'; image_url: { url: string } }
+    >;
+
 interface OpenRouterMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: MessageContent;
 }
 
 interface OpenRouterRequest {
@@ -86,7 +93,11 @@ async function sendToOpenRouter(
 
   // If conversation history is provided, use it
   if (options.messages && options.messages.length > 0) {
-    messages = [...options.messages];
+    // Convert messages to proper format (handle both string and multimodal content)
+    messages = options.messages.map(msg => ({
+      role: msg.role,
+      content: msg.content // Can be string or array for multimodal
+    }));
     
     // Add system instruction if provided and not already present
     if (options.systemInstruction) {
@@ -112,13 +123,13 @@ async function sendToOpenRouter(
       throw new Error('Either message or messages array must be provided');
     }
 
-    // Add system instruction if provided
-    if (options.systemInstruction) {
-      messages.push({
-        role: 'system',
-        content: options.systemInstruction,
-      });
-    }
+    //! Add system instruction if provided TEMP
+    // if (options.systemInstruction) {
+    //   messages.push({
+    //     role: 'system',
+    //     content: options.systemInstruction,
+    //   });
+    // }
 
     // Add user message
     messages.push({
@@ -162,6 +173,7 @@ async function sendToOpenRouter(
     payload.stream = options.stream;
   }
 
+  
   try {
     const response = await fetch(OPENROUTER_API_URL, {
       method: 'POST',
@@ -176,10 +188,20 @@ async function sendToOpenRouter(
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(
-        errorData.error?.message || 
-        `OpenRouter API error: ${response.status} ${response.statusText}`
-      );
+      // Log the full error for debugging
+      console.error('OpenRouter API Error Details:', {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorData
+      });
+      
+      // Extract more detailed error message
+      const errorMessage = errorData.error?.message 
+        || errorData.error?.detail
+        || errorData.message
+        || `OpenRouter API error: ${response.status} ${response.statusText}`;
+      
+      throw new Error(errorMessage);
     }
 
     const data: OpenRouterAPIResponse = await response.json();
@@ -196,16 +218,27 @@ async function sendToOpenRouter(
     }
 
     // Add assistant response to conversation history
+    // Assistant messages are always text, not multimodal
+    const assistantContent = data.choices[0]?.message?.content || '';
     const assistantMessage: OpenRouterMessage = {
       role: 'assistant',
-      content: data.choices[0]?.message?.content || '',
+      content: typeof assistantContent === 'string' ? assistantContent : JSON.stringify(assistantContent),
     };
-    const updatedMessages = [...messages, assistantMessage];
+    const updatedMessages: OpenRouterMessage[] = [...messages, assistantMessage];
 
     // Transform response to our format
+    // Ensure messages match the validator type exactly
+    const responseMessages = updatedMessages.map(msg => ({
+      role: msg.role as 'system' | 'user' | 'assistant',
+      content: msg.content as string | Array<
+        | { type: 'text'; text: string }
+        | { type: 'image_url'; image_url: { url: string } }
+      >
+    }));
+
     return {
       success: true,
-      content: data.choices[0]?.message?.content || '',
+      content: typeof assistantContent === 'string' ? assistantContent : JSON.stringify(assistantContent),
       model: data.model,
       usage: {
         promptTokens: data.usage.prompt_tokens,
@@ -214,7 +247,7 @@ async function sendToOpenRouter(
       },
       finishReason: data.choices[0]?.finish_reason || 'stop',
       id: data.id,
-      messages: updatedMessages, // Return updated conversation history
+      messages: responseMessages, // Return updated conversation history
     };
   } catch (error) {
     if (error instanceof Error) {
@@ -232,12 +265,28 @@ export const sendMessage = action({
       v.array(
         v.object({
           role: v.union(v.literal('system'), v.literal('user'), v.literal('assistant')),
-          content: v.string(),
+          content: v.union(
+            v.string(),
+            v.array(
+              v.union(
+                v.object({
+                  type: v.literal('text'),
+                  text: v.string(),
+                }),
+                v.object({
+                  type: v.literal('image_url'),
+                  image_url: v.object({
+                    url: v.string(),
+                  }),
+                })
+              )
+            )
+          ),
         })
       )
     ),
     model: v.string(),
-    systemInstruction: v.optional(v.string()),
+    //! systemInstruction: v.optional(v.string()), TEMP
     temperature: v.optional(v.number()),
     maxTokens: v.optional(v.number()),
     topP: v.optional(v.number()),
@@ -261,7 +310,23 @@ export const sendMessage = action({
       v.array(
         v.object({
           role: v.union(v.literal('system'), v.literal('user'), v.literal('assistant')),
-          content: v.string(),
+          content: v.union(
+            v.string(),
+            v.array(
+              v.union(
+                v.object({
+                  type: v.literal('text'),
+                  text: v.string(),
+                }),
+                v.object({
+                  type: v.literal('image_url'),
+                  image_url: v.object({
+                    url: v.string(),
+                  }),
+                })
+              )
+            )
+          ),
         })
       )
     ),
@@ -288,7 +353,7 @@ export const sendMessage = action({
       message: args.message,
       messages: args.messages,
       model: args.model,
-      systemInstruction: args.systemInstruction,
+      //! systemInstruction: args.systemInstruction, TEMP
       temperature: args.temperature,
       maxTokens: args.maxTokens,
       topP: args.topP,
