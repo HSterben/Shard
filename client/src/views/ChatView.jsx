@@ -122,8 +122,164 @@ const ChatView = () => {
     };
   };
 
-  // Function to call OpenRouter API via Convex
-  const askOpenRouter = async (message = '', files = [], model = 'mistralai/devstral-2512:free', options = {}, isRetry = false) => {
+  // Function to call OpenRouter API with streaming
+  const askOpenRouterStream = async (message = '', files = [], model = 'google/gemma-3-27b-it:free', options = {}, onChunk, isRetry = false) => {
+    // Build messages array with conversation context
+    const contextMessages = conversationContext.current.map(msg => {
+      if (msg.images && msg.images.length > 0) {
+        // Handle multimodal message with images
+        const content = [{ type: 'text', text: msg.text }];
+        msg.images.forEach(img => {
+          content.push({
+            type: 'image_url',
+            image_url: { url: img }
+          });
+        });
+        return {
+          role: msg.sender === 'user' ? 'user' : 'assistant',
+          content: content
+        };
+      }
+      return {
+        role: msg.sender === 'user' ? 'user' : 'assistant',
+        content: msg.text
+      };
+    });
+    
+    // Build current message with images if any
+    let currentMessageContent;
+    if (files.length > 0) {
+      currentMessageContent = [{ type: 'text', text: message || '' }];
+      for (const fileData of files) {
+        currentMessageContent.push({
+          type: 'image_url',
+          image_url: { url: fileData.dataUrl }
+        });
+      }
+    } else {
+      currentMessageContent = message;
+    }
+    
+    // Add current message
+    contextMessages.push({
+      role: 'user',
+      content: currentMessageContent
+    });
+
+    try {
+      // Ensure we have auth token
+      if (!authToken) {
+        throw new Error('Authentication token not available. Please log in.');
+      }
+
+      // Get Convex URL and auth token
+      const convexUrl = CONVEX_URL.replace('https://', '').replace('.convex.cloud', '');
+      const streamUrl = `https://${convexUrl}.convex.site/openrouter/stream`;
+      
+      console.log('Calling streaming endpoint:', streamUrl);
+      
+      // Call streaming endpoint
+      const response = await fetch(streamUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          messages: contextMessages,
+          model,
+          temperature: options.temperature,
+          maxTokens: options.maxTokens,
+          topP: options.topP,
+          frequencyPenalty: options.frequencyPenalty,
+          presencePenalty: options.presencePenalty,
+          stop: options.stop,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.error || `HTTP error: ${response.status}`;
+        
+        // Check if it's an authentication error and we haven't retried yet
+        if (!isRetry && (response.status === 401 || errorMessage.includes('Authentication'))) {
+          console.log('Auth error detected in stream, attempting token refresh...');
+          const refreshed = await refreshAndRetry();
+          if (refreshed) {
+            // Retry the request with the new token
+            return askOpenRouterStream(message, files, model, options, onChunk, true);
+          }
+        }
+        
+        throw new Error(errorMessage);
+      }
+
+      // Read the stream
+      if (!response.body) {
+        throw new Error('Response body is null - streaming not supported');
+      }
+      
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = '';
+      let messageId = '';
+      let finishReason = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') {
+              return {
+                content: fullContent,
+                id: messageId,
+                finishReason: finishReason || 'stop',
+              };
+            }
+
+            try {
+              const parsed = JSON.parse(data);
+              const delta = parsed.choices?.[0]?.delta;
+              
+              if (delta?.content) {
+                fullContent += delta.content;
+                onChunk(delta.content); // Call the callback with each chunk
+              }
+
+              if (parsed.id) messageId = parsed.id;
+              if (parsed.choices?.[0]?.finish_reason) {
+                finishReason = parsed.choices[0].finish_reason;
+              }
+            } catch (e) {
+              // Skip invalid JSON
+            }
+          }
+        }
+      }
+
+      return {
+        content: fullContent,
+        id: messageId,
+        finishReason: finishReason || 'stop',
+      };
+    } catch (error) {
+      console.error('Streaming fetch error:', error);
+      // Provide more helpful error messages
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        throw new Error('Network error: Could not connect to streaming endpoint. Please check your connection.');
+      }
+      throw error;
+    }
+  };
+
+  // Function to call OpenRouter API via Convex (non-streaming, kept for fallback)
+  const askOpenRouter = async (message = '', files = [], model = 'google/gemma-3-27b-it:free', options = {}, isRetry = false) => {
     // Build messages array with conversation context
     const contextMessages = conversationContext.current.map(msg => {
       if (msg.images && msg.images.length > 0) {
@@ -197,64 +353,67 @@ const ChatView = () => {
     }
   };
 
-  // Get AI response for a message
+  // Get AI response for a message with streaming
   const getAIResponse = async (userMessage, files = []) => {
     setIsLoading(true);
+    
+    // Create a placeholder message that we'll update as we stream
+    const aiMessageId = Date.now() + 1;
+    const aiMessage = {
+      id: aiMessageId,
+      text: '',
+      sender: 'ai',
+      timestamp: new Date(),
+      isStreaming: true
+    };
+
+    // Add placeholder message immediately
+    setMessages(prev => [...prev, aiMessage]);
+
     try {
-      const response = await askOpenRouter(
+      let fullContent = '';
+      
+      const response = await askOpenRouterStream(
         userMessage,
         files,
         'google/gemma-3-27b-it:free',
         {
-          //! systemInstruction: 'You are a helpful assistant.', TEMP
           temperature: 0.7,
           maxTokens: 500,
+        },
+        (chunk) => {
+          // Update message as chunks arrive
+          fullContent += chunk;
+          setMessages(prev => prev.map(msg => 
+            msg.id === aiMessageId 
+              ? { ...msg, text: fullContent }
+              : msg
+          ));
         }
       );
 
-      // Add AI response to messages
-      const aiMessage = {
-        id: Date.now() + 1,
-        text: response.content,
-        sender: 'ai',
-        timestamp: new Date()
-      };
-
-      setMessages(prev => [...prev, aiMessage]);
+      // Finalize the message
+      setMessages(prev => prev.map(msg => 
+        msg.id === aiMessageId 
+          ? { ...msg, text: response.content || fullContent, isStreaming: false }
+          : msg
+      ));
       
-      // Update conversation context with the full conversation history from response
-      if (response.messages) {
-        conversationContext.current = response.messages.map(msg => {
-          // Handle multimodal content
-          if (Array.isArray(msg.content)) {
-            const textParts = msg.content.filter(c => c.type === 'text').map(c => c.text).join(' ');
-            const images = msg.content.filter(c => c.type === 'image_url').map(c => c.image_url.url);
-            return {
-              text: textParts,
-              images: images.length > 0 ? images : undefined,
-              sender: msg.role === 'user' ? 'user' : msg.role === 'assistant' ? 'ai' : 'system'
-            };
-          }
-          return {
-            text: typeof msg.content === 'string' ? msg.content : '',
-            sender: msg.role === 'user' ? 'user' : msg.role === 'assistant' ? 'ai' : 'system'
-          };
-        });
-      } else {
-        // Fallback to manual update if messages not provided
-        conversationContext.current = [
-          ...conversationContext.current,
-          { 
-            text: userMessage, 
-            sender: 'user',
-            images: files.length > 0 ? files.map(f => f.dataUrl) : undefined
-          },
-          { text: response.content, sender: 'ai' }
-        ];
-      }
+      // Update conversation context
+      const finalContent = response.content || fullContent;
+      conversationContext.current = [
+        ...conversationContext.current,
+        { 
+          text: userMessage, 
+          sender: 'user',
+          images: files.length > 0 ? files.map(f => f.dataUrl) : undefined
+        },
+        { text: finalContent, sender: 'ai' }
+      ];
     } catch (error) {
       console.error('Error getting AI response:', error);
-      // Add error message
+      // Remove the streaming message and add error message
+      setMessages(prev => prev.filter(msg => msg.id !== aiMessageId));
       const errorMessage = {
         id: Date.now() + 1,
         text: `Error: ${error instanceof Error ? error.message : 'Failed to get response'}`,
@@ -312,7 +471,7 @@ const ChatView = () => {
   }, [isAuthenticated]);
 
   useEffect(() => {
-    // Scroll to bottom when messages change
+    // Scroll to bottom when messages change (including during streaming)
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
@@ -604,18 +763,16 @@ const ChatView = () => {
                       ))}
                     </div>
                   )}
-                  {msg.text && <div className="message-text">{msg.text}</div>}
+                  {msg.text && (
+                    <div className="message-text">
+                      {msg.text}
+                      {msg.isStreaming && <span className="streaming-cursor">▋</span>}
+                    </div>
+                  )}
                 </div>
                 <div className="message-time">{formatTime(msg.timestamp)}</div>
               </div>
             ))}
-            {isLoading && (
-              <div className="message message-ai">
-                <div className="message-bubble message-loading">
-                  <span className="loading-dots">Thinking</span>
-                </div>
-              </div>
-            )}
           </>
         )}
         <div ref={messagesEndRef} />

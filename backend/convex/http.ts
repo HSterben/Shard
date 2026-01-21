@@ -424,4 +424,178 @@ http.route({
   }),
 });
 
+// Streaming OpenRouter endpoint
+http.route({
+  path: '/openrouter/stream',
+  method: 'OPTIONS',
+  handler: httpAction(async () => {
+    // Handle CORS preflight
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Max-Age': '86400',
+      },
+    });
+  }),
+});
+
+http.route({
+  path: '/openrouter/stream',
+  method: 'POST',
+  handler: httpAction(async (ctx, req) => {
+    // Check authentication
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return new Response(
+        JSON.stringify({ error: 'Authentication required' }),
+        { 
+          status: 401, 
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          } 
+        }
+      );
+    }
+
+    try {
+      const body = await req.json();
+      const { messages, model, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stop } = body;
+
+      if (!model) {
+        return new Response(
+          JSON.stringify({ error: 'Model is required' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (!messages || messages.length === 0) {
+        return new Response(
+          JSON.stringify({ error: 'Messages are required' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+      const OPENROUTER_HTTP_REFERER = process.env.OPENROUTER_HTTP_REFERER || '';
+      const OPENROUTER_X_TITLE = process.env.OPENROUTER_X_TITLE || 'Shard';
+
+      if (!OPENROUTER_API_KEY) {
+        return new Response(
+          JSON.stringify({ error: 'OpenRouter API key not configured' }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Build payload
+      const payload: any = {
+        model,
+        messages,
+        stream: true,
+      };
+
+      if (temperature !== undefined) payload.temperature = temperature;
+      if (maxTokens !== undefined) payload.max_tokens = maxTokens;
+      if (topP !== undefined) payload.top_p = topP;
+      if (frequencyPenalty !== undefined) payload.frequency_penalty = frequencyPenalty;
+      if (presencePenalty !== undefined) payload.presence_penalty = presencePenalty;
+      if (stop !== undefined) payload.stop = stop;
+
+      // Call OpenRouter with streaming
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+          'HTTP-Referer': OPENROUTER_HTTP_REFERER,
+          'X-Title': OPENROUTER_X_TITLE,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        return new Response(
+          JSON.stringify({ error: errorData.error?.message || 'OpenRouter API error' }),
+          { 
+            status: response.status, 
+            headers: { 
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+            } 
+          }
+        );
+      }
+
+      // Create a readable stream that proxies OpenRouter's stream
+      const stream = new ReadableStream({
+        async start(controller) {
+          const reader = response.body?.getReader();
+          const decoder = new TextDecoder();
+
+          if (!reader) {
+            controller.close();
+            return;
+          }
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              const chunk = decoder.decode(value, { stream: true });
+              const lines = chunk.split('\n');
+
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  const data = line.slice(6);
+                  if (data === '[DONE]') {
+                    controller.close();
+                    return;
+                  }
+                  try {
+                    const parsed = JSON.parse(data);
+                    // Forward the SSE data
+                    controller.enqueue(new TextEncoder().encode(`data: ${data}\n\n`));
+                  } catch (e) {
+                    // Skip invalid JSON
+                  }
+                }
+              }
+            }
+            controller.close();
+          } catch (error) {
+            controller.error(error);
+          }
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        },
+      });
+    } catch (error) {
+      console.error('Streaming error:', error);
+      return new Response(
+        JSON.stringify({ error: error instanceof Error ? error.message : 'Internal server error' }),
+        { 
+          status: 500, 
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          } 
+        }
+      );
+    }
+  }),
+});
+
 export default http;
