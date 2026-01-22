@@ -149,3 +149,40 @@ body {
   z-index: 1;
   stroke: var(--color-bg-primary);
 }
+
+.chat-bubble-attachment-badge {
+  display: flex;
+  align-items: center;
+  gap: calc(4px * var(--size-multiplier));
+  padding: calc(4px * var(--size-multiplier)) calc(8px * var(--size-multiplier));
+  background: var(--color-accent-primary);
+  color: var(--color-bg-primary);
+  border-radius: calc(12px * var(--size-multiplier));
+  font-size: calc(11px * var(--size-multiplier));
+  font-weight: 600;
+  margin-right: calc(4px * var(--size-multiplier));
+  flex-shrink: 0;
+  position: relative;
+}
+
+.chat-bubble-attachment-remove-badge {
+  width: calc(16px * var(--size-multiplier));
+  height: calc(16px * var(--size-multiplier));
+  border: none;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--color-bg-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  padding: 0;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+  margin-left: calc(2px * var(--size-multiplier));
+}
+
+.chat-bubble-attachment-remove-badge:hover {
+  background: rgba(0, 0, 0, 0.4);
+  transform: scale(1.1);
+}
