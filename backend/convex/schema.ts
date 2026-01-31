@@ -15,4 +15,31 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('by_workos_id', ['workosId']),
+
+  subscriptions: defineTable({
+    // Preferred key: WorkOS user id (injective mapping)
+    // Optional to avoid breaking any existing records created by the public email flow.
+    workosId: v.optional(v.string()),
+
+    // Email is still useful for Stripe receipts / fallback matching
+    email: v.optional(v.string()),
+
+    // Stripe identifiers (may be absent until checkout completes)
+    stripeCustomerId: v.optional(v.string()),
+    stripeSubscriptionId: v.optional(v.string()),
+
+    // Stripe subscription status (active, trialing, past_due, canceled, unpaid, etc.)
+    status: v.string(),
+
+    // Subscription details
+    currentPeriodEnd: v.optional(v.number()),
+    priceId: v.optional(v.string()),
+
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_workos_id', ['workosId'])
+    .index('by_email', ['email'])
+    .index('by_stripe_customer_id', ['stripeCustomerId'])
+    .index('by_stripe_subscription_id', ['stripeSubscriptionId']),
 });

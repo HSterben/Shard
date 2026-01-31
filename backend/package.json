@@ -27,7 +27,8 @@
     "@workos-inc/authkit-react": "^0.13.0",
     "convex": "^1.31.0",
     "react": "^19.2.1",
-    "react-dom": "^19.2.1"
+    "react-dom": "^19.2.1",
+    "stripe": "^20.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

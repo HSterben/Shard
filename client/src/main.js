@@ -419,6 +419,19 @@ ipcMain.handle("open-login", async () => {
   return { success: true };
 });
 
+ipcMain.handle("open-external", async (_event, url) => {
+  try {
+    if (typeof url !== "string" || url.length === 0) {
+      return { success: false, error: "Invalid URL" };
+    }
+    await shell.openExternal(url);
+    return { success: true };
+  } catch (err) {
+    console.error("Failed to open external URL:", err);
+    return { success: false, error: "Failed to open URL" };
+  }
+});
+
 ipcMain.handle("logout", async () => {
   store.delete("accessToken");
   store.delete("refreshToken");

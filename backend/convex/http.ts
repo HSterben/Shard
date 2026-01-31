@@ -4,6 +4,114 @@ import { api } from './_generated/api';
 
 const http = httpRouter();
 
+function htmlResponse(html: string, status = 200) {
+  return new Response(html, {
+    status,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
+function jsonResponse(body: unknown, status = 200, extraHeaders: Record<string, string> = {}) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      ...extraHeaders,
+    },
+  });
+}
+
+async function stripeApiRequest(path: string, form: URLSearchParams) {
+  const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+  if (!STRIPE_SECRET_KEY) {
+    throw new Error('STRIPE_SECRET_KEY is not configured');
+  }
+
+  const resp = await fetch(`https://api.stripe.com/v1${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${STRIPE_SECRET_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: form.toString(),
+  });
+
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const message = (data as any)?.error?.message || `Stripe API error: ${resp.status}`;
+    throw new Error(message);
+  }
+  return data as any;
+}
+
+function hexFromBuffer(buffer: ArrayBuffer) {
+  return Array.from(new Uint8Array(buffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function constantTimeEquals(a: string, b: string) {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+async function verifyStripeWebhookSignature(rawBody: string, signatureHeader: string, secret: string) {
+  // Stripe-Signature: t=...,v1=...,v0=...
+  const parts = signatureHeader.split(',');
+  let timestamp: string | null = null;
+  const signatures: string[] = [];
+
+  for (const part of parts) {
+    const [k, v] = part.split('=');
+    if (!k || !v) continue;
+    if (k === 't') timestamp = v;
+    if (k === 'v1') signatures.push(v);
+  }
+
+  if (!timestamp || signatures.length === 0) {
+    return { ok: false, reason: 'Invalid Stripe-Signature header' };
+  }
+
+  // 5 minute tolerance
+  const toleranceSeconds = 300;
+  const tsSeconds = parseInt(timestamp, 10);
+  if (!Number.isFinite(tsSeconds)) {
+    return { ok: false, reason: 'Invalid timestamp' };
+  }
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (Math.abs(nowSeconds - tsSeconds) > toleranceSeconds) {
+    return { ok: false, reason: 'Timestamp outside tolerance window' };
+  }
+
+  const signedPayload = `${timestamp}.${rawBody}`;
+
+  const encoder = new TextEncoder();
+  const keyData = encoder.encode(secret);
+  const messageData = encoder.encode(signedPayload);
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+
+  const signatureBuffer = await crypto.subtle.sign('HMAC', cryptoKey, messageData);
+  const computed = hexFromBuffer(signatureBuffer);
+
+  const matches = signatures.some((sig) => constantTimeEquals(sig, computed));
+  return { ok: matches, reason: matches ? undefined : 'Signature mismatch' };
+}
+
 // WorkOS AuthKit OAuth configuration
 // WORKOS_CLIENT_ID is public (safe to hardcode)
 // WORKOS_API_KEY must be set as a Convex environment variable (it's secret!)
@@ -549,6 +657,7 @@ http.route({
         async start(controller) {
           const reader = response.body?.getReader();
           const decoder = new TextDecoder();
+          let buffer = ''; // Buffer for incomplete lines
 
           if (!reader) {
             controller.close();
@@ -558,30 +667,74 @@ http.route({
           try {
             while (true) {
               const { done, value } = await reader.read();
-              if (done) break;
-
-              const chunk = decoder.decode(value, { stream: true });
-              const lines = chunk.split('\n');
-
+              
+              if (done) {
+                // Process any remaining buffered data
+                if (buffer.trim()) {
+                  const lines = buffer.split('\n');
               for (const line of lines) {
+                // Handle SSE format: "data: {...}" or just "data:"
                 if (line.startsWith('data: ')) {
-                  const data = line.slice(6);
+                  const data = line.slice(6).trim();
                   if (data === '[DONE]') {
                     controller.close();
                     return;
                   }
-                  try {
-                    const parsed = JSON.parse(data);
-                    // Forward the SSE data
-                    controller.enqueue(new TextEncoder().encode(`data: ${data}\n\n`));
-                  } catch (e) {
-                    // Skip invalid JSON
+                  if (data) {
+                    try {
+                      const parsed = JSON.parse(data);
+                      // Forward the SSE data
+                      controller.enqueue(new TextEncoder().encode(`data: ${data}\n\n`));
+                    } catch (e) {
+                      // Skip invalid JSON
+                      console.warn('Skipping invalid JSON in stream:', data.substring(0, 100));
+                    }
+                  }
+                }
+              }
+                }
+                controller.close();
+                break;
+              }
+
+              // Decode chunk and append to buffer
+              const chunk = decoder.decode(value, { stream: true });
+              buffer += chunk;
+
+              // Process complete lines (those ending with \n)
+              const lines = buffer.split('\n');
+              // Keep the last incomplete line in buffer
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                // Handle SSE format: "data: {...}" or just "data:"
+                if (line.startsWith('data: ')) {
+                  const data = line.slice(6).trim();
+                  if (data === '[DONE]') {
+                    controller.close();
+                    return;
+                  }
+                  if (data) {
+                    try {
+                      const parsed = JSON.parse(data);
+                      // Forward the SSE data
+                      controller.enqueue(new TextEncoder().encode(`data: ${data}\n\n`));
+                    } catch (e) {
+                      // Skip invalid JSON
+                      console.warn('Skipping invalid JSON in stream:', data.substring(0, 100));
+                    }
                   }
                 }
               }
             }
-            controller.close();
           } catch (error) {
+            console.error('Stream processing error:', error);
+            // Send error as SSE event before closing
+            try {
+              controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ error: error instanceof Error ? error.message : 'Stream error' })}\n\n`));
+            } catch (e) {
+              // Ignore errors when sending error message
+            }
             controller.error(error);
           }
         },
@@ -608,6 +761,413 @@ http.route({
           } 
         }
       );
+    }
+  }),
+});
+
+// Public subscription page (browser)
+http.route({
+  path: '/subscribe',
+  method: 'GET',
+  handler: httpAction(async (_, req) => {
+    const url = new URL(req.url);
+    const priceMonthly = process.env.STRIPE_PRICE_ID_MONTHLY || '';
+    const priceYearly = process.env.STRIPE_PRICE_ID_YEARLY || '';
+
+    return htmlResponse(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shard Subscription</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+      .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; }
+      label { display:block; margin: 10px 0 6px; font-weight: 600; }
+      input, select, button { width: 100%; padding: 10px 12px; font-size: 16px; }
+      button { margin-top: 14px; cursor: pointer; }
+      .muted { color: #6b7280; font-size: 14px; }
+      .error { color: #b91c1c; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>Subscribe to Shard</h1>
+    <p class="muted">Enter your email, pick a plan, and you’ll be redirected to Stripe Checkout.</p>
+
+    <div class="card">
+      <div id="configError" class="error"></div>
+      <label>Email</label>
+      <input id="email" type="email" placeholder="you@example.com" required />
+
+      <label>Plan</label>
+      <select id="plan">
+        <option value="${priceMonthly}">Monthly</option>
+        <option value="${priceYearly}">Yearly</option>
+      </select>
+
+      <button id="btn">Continue to Checkout</button>
+      <div id="err" class="error" style="margin-top:10px;"></div>
+    </div>
+
+    <script>
+      const priceMonthly = ${JSON.stringify(priceMonthly)};
+      const priceYearly = ${JSON.stringify(priceYearly)};
+      if (!priceMonthly && !priceYearly) {
+        document.getElementById('configError').textContent =
+          'Subscription pricing is not configured.\\nSet STRIPE_PRICE_ID_MONTHLY and/or STRIPE_PRICE_ID_YEARLY.';
+      }
+      const planSelect = document.getElementById('plan');
+      if (!priceMonthly) planSelect.querySelector('option[value=\"\"]').textContent = 'Monthly (not configured)';
+      if (!priceYearly) planSelect.querySelectorAll('option')[1].textContent = 'Yearly (not configured)';
+
+      document.getElementById('btn').addEventListener('click', async () => {
+        const email = document.getElementById('email').value.trim();
+        const priceId = planSelect.value;
+        const err = document.getElementById('err');
+        err.textContent = '';
+        if (!email) { err.textContent = 'Email is required.'; return; }
+        if (!priceId) { err.textContent = 'Selected plan is not configured.'; return; }
+        try {
+          const res = await fetch(new URL('/stripe/create-checkout-session', window.location.origin), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, priceId }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+          window.location.href = data.url;
+        } catch (e) {
+          err.textContent = (e && e.message) ? e.message : String(e);
+        }
+      });
+    </script>
+  </body>
+</html>`, 200);
+  }),
+});
+
+http.route({
+  path: '/subscribe/success',
+  method: 'GET',
+  handler: httpAction(async () => {
+    return htmlResponse('<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Success</title></head><body style="font-family:system-ui;max-width:720px;margin:40px auto;padding:0 16px;"><h1>Subscription started</h1><p>You can close this tab.</p></body></html>');
+  }),
+});
+
+http.route({
+  path: '/subscribe/cancel',
+  method: 'GET',
+  handler: httpAction(async () => {
+    return htmlResponse('<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Cancelled</title></head><body style="font-family:system-ui;max-width:720px;margin:40px auto;padding:0 16px;"><h1>Checkout cancelled</h1><p>No changes were made.</p></body></html>');
+  }),
+});
+
+http.route({
+  path: '/stripe/create-checkout-session',
+  method: 'POST',
+  handler: httpAction(async (ctx, req) => {
+    try {
+      const { email, priceId } = (await req.json()) as { email?: string; priceId?: string };
+      if (!email || !priceId) {
+        return jsonResponse({ error: 'email and priceId are required' }, 400);
+      }
+
+      const baseUrl = new URL(req.url).origin;
+      const successUrl = `${baseUrl}/subscribe/success?session_id={CHECKOUT_SESSION_ID}`;
+      const cancelUrl = `${baseUrl}/subscribe/cancel`;
+
+      // Record intent (so webhook updates have a row to patch)
+      await ctx.runMutation(api.subscriptions.upsertByEmail, {
+        email,
+        status: 'pending',
+        priceId,
+      });
+
+      const form = new URLSearchParams();
+      form.set('mode', 'subscription');
+      form.set('customer_email', email);
+      form.set('allow_promotion_codes', 'true');
+      form.set('success_url', successUrl);
+      form.set('cancel_url', cancelUrl);
+      form.set('line_items[0][price]', priceId);
+      form.set('line_items[0][quantity]', '1');
+
+      // Make email available later on subscription events
+      form.set('subscription_data[metadata][email]', email);
+      form.set('metadata[email]', email);
+
+      const session = await stripeApiRequest('/checkout/sessions', form);
+      if (!session?.url) {
+        return jsonResponse({ error: 'Stripe did not return a checkout URL' }, 500);
+      }
+
+      return jsonResponse({ url: session.url }, 200);
+    } catch (error) {
+      return jsonResponse(
+        { error: error instanceof Error ? error.message : 'Failed to create checkout session' },
+        500
+      );
+    }
+  }),
+});
+
+// CORS preflight for Stripe auth checkout (required when sending Authorization from Electron)
+http.route({
+  path: '/stripe/create-checkout-session-auth',
+  method: 'OPTIONS',
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Max-Age': '86400',
+      },
+    });
+  }),
+});
+
+// Stripe config for in-app subscription UI (public, no secrets)
+http.route({
+  path: '/stripe/plans',
+  method: 'GET',
+  handler: httpAction(async () => {
+    return jsonResponse(
+      {
+        monthly: process.env.STRIPE_PRICE_ID_MONTHLY || null,
+        yearly: process.env.STRIPE_PRICE_ID_YEARLY || null,
+      },
+      200,
+      { 'Access-Control-Allow-Origin': '*' }
+    );
+  }),
+});
+
+// Authenticated checkout session creation (Flow A: tie to WorkOS account)
+http.route({
+  path: '/stripe/create-checkout-session-auth',
+  method: 'POST',
+  handler: httpAction(async (ctx, req) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return jsonResponse({ error: 'Authentication required' }, 401, {
+        'Access-Control-Allow-Origin': '*',
+      });
+    }
+
+    const workosId = identity.subject;
+    // WorkOS JWT may not include email depending on JWT template; fall back to users table (synced by webhook)
+    let email =
+      (identity as { email?: string }).email ??
+      (await ctx.runQuery(api.users.getUserByWorkosId, { workosId }))?.email;
+
+    if (!email) {
+      return jsonResponse({ error: 'No email available for this account' }, 400, {
+        'Access-Control-Allow-Origin': '*',
+      });
+    }
+
+    try {
+      const { priceId } = (await req.json()) as { priceId?: string };
+      if (!priceId) {
+        return jsonResponse({ error: 'priceId is required' }, 400, {
+          'Access-Control-Allow-Origin': '*',
+        });
+      }
+
+      const baseUrl = new URL(req.url).origin;
+      const successUrl = `${baseUrl}/subscribe/success?session_id={CHECKOUT_SESSION_ID}`;
+      const cancelUrl = `${baseUrl}/subscribe/cancel`;
+
+      await ctx.runMutation(api.subscriptions.upsertByWorkosId, {
+        workosId,
+        email,
+        status: 'pending',
+        priceId,
+      });
+
+      const form = new URLSearchParams();
+      form.set('mode', 'subscription');
+      form.set('customer_email', email);
+      form.set('client_reference_id', workosId);
+      form.set('allow_promotion_codes', 'true');
+      form.set('success_url', successUrl);
+      form.set('cancel_url', cancelUrl);
+      form.set('line_items[0][price]', priceId);
+      form.set('line_items[0][quantity]', '1');
+
+      // Make WorkOS id + email available in webhook events
+      form.set('subscription_data[metadata][workosId]', workosId);
+      form.set('subscription_data[metadata][email]', email);
+      form.set('metadata[workosId]', workosId);
+      form.set('metadata[email]', email);
+
+      const session = await stripeApiRequest('/checkout/sessions', form);
+      if (!session?.url) {
+        return jsonResponse({ error: 'Stripe did not return a checkout URL' }, 500, {
+          'Access-Control-Allow-Origin': '*',
+        });
+      }
+
+      return jsonResponse({ url: session.url }, 200, { 'Access-Control-Allow-Origin': '*' });
+    } catch (error) {
+      return jsonResponse(
+        { error: error instanceof Error ? error.message : 'Failed to create checkout session' },
+        500,
+        { 'Access-Control-Allow-Origin': '*' }
+      );
+    }
+  }),
+});
+
+// Stripe webhook endpoint (subscriptions)
+http.route({
+  path: '/webhooks/stripe',
+  method: 'POST',
+  handler: httpAction(async (ctx, req) => {
+    const signatureHeader = req.headers.get('stripe-signature');
+    if (!signatureHeader) {
+      return jsonResponse({ error: 'Missing stripe-signature header' }, 400);
+    }
+
+    const webhookSecret =
+      process.env.STRIPE_WEBHOOK_SIGNING_SECRET ?? process.env.STRIPE_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      return jsonResponse(
+        { error: 'STRIPE_WEBHOOK_SIGNING_SECRET or STRIPE_WEBHOOK_SECRET not configured' },
+        500
+      );
+    }
+
+    const rawBody = await req.text();
+
+    const verified = await verifyStripeWebhookSignature(rawBody, signatureHeader, webhookSecret);
+    if (!verified.ok) {
+      return jsonResponse({ error: verified.reason || 'Invalid signature' }, 400);
+    }
+
+    let event: any;
+    try {
+      event = JSON.parse(rawBody);
+    } catch {
+      return jsonResponse({ error: 'Invalid JSON payload' }, 400);
+    }
+
+    const type = event?.type as string | undefined;
+    const obj = event?.data?.object;
+
+    try {
+      if (type === 'checkout.session.completed') {
+        const session = obj;
+        const workosId =
+          session?.metadata?.workosId ||
+          session?.client_reference_id ||
+          undefined;
+        const email =
+          session?.customer_details?.email ||
+          session?.customer_email ||
+          session?.metadata?.email ||
+          undefined;
+
+        if (workosId) {
+          await ctx.runMutation(api.subscriptions.upsertByWorkosId, {
+            workosId,
+            email,
+            status: session?.payment_status === 'paid' ? 'active' : 'pending',
+            stripeCustomerId: session?.customer || undefined,
+            stripeSubscriptionId: session?.subscription || undefined,
+          });
+        } else if (email) {
+          await ctx.runMutation(api.subscriptions.upsertByEmail, {
+            email,
+            status: session?.payment_status === 'paid' ? 'active' : 'pending',
+            stripeCustomerId: session?.customer || undefined,
+            stripeSubscriptionId: session?.subscription || undefined,
+          });
+        }
+      }
+
+      if (
+        type === 'customer.subscription.created' ||
+        type === 'customer.subscription.updated' ||
+        type === 'customer.subscription.deleted'
+      ) {
+        const sub = obj;
+        const workosId = sub?.metadata?.workosId || undefined;
+        const email = sub?.metadata?.email || undefined;
+        const currentPeriodEnd =
+          typeof sub?.current_period_end === 'number' ? sub.current_period_end * 1000 : undefined;
+        const priceId = sub?.items?.data?.[0]?.price?.id || undefined;
+        const status = sub?.status || 'unknown';
+
+        if (workosId) {
+          await ctx.runMutation(api.subscriptions.upsertByWorkosId, {
+            workosId,
+            email,
+            status,
+            stripeCustomerId: sub?.customer || undefined,
+            stripeSubscriptionId: sub?.id || undefined,
+            currentPeriodEnd,
+            priceId,
+          });
+        } else if (email) {
+          await ctx.runMutation(api.subscriptions.upsertByEmail, {
+            email,
+            status,
+            stripeCustomerId: sub?.customer || undefined,
+            stripeSubscriptionId: sub?.id || undefined,
+            currentPeriodEnd,
+            priceId,
+          });
+        }
+        // Always update by subscription id so the row we created in checkout.session.completed gets status active
+        if (sub?.id) {
+          await ctx.runMutation(api.subscriptions.updateByStripeSubscriptionId, {
+            stripeSubscriptionId: sub.id,
+            status,
+            stripeCustomerId: sub?.customer || undefined,
+            currentPeriodEnd,
+            priceId,
+          });
+        }
+      }
+
+      if (type === 'invoice.payment_succeeded' || type === 'invoice.payment_failed') {
+        const invoice = obj;
+        const workosId =
+          invoice?.subscription_details?.metadata?.workosId ||
+          invoice?.metadata?.workosId ||
+          undefined;
+        const email =
+          invoice?.customer_email ||
+          invoice?.customer_details?.email ||
+          invoice?.metadata?.email ||
+          undefined;
+
+        if (workosId) {
+          await ctx.runMutation(api.subscriptions.upsertByWorkosId, {
+            workosId,
+            email,
+            status: type === 'invoice.payment_succeeded' ? 'active' : 'past_due',
+            stripeCustomerId: invoice?.customer || undefined,
+            stripeSubscriptionId: invoice?.subscription || undefined,
+          });
+        } else if (email) {
+          await ctx.runMutation(api.subscriptions.upsertByEmail, {
+            email,
+            status: type === 'invoice.payment_succeeded' ? 'active' : 'past_due',
+            stripeCustomerId: invoice?.customer || undefined,
+            stripeSubscriptionId: invoice?.subscription || undefined,
+          });
+        }
+      }
+
+      // Always ACK so Stripe doesn't retry endlessly for unhandled events.
+      return jsonResponse({ received: true }, 200);
+    } catch (err) {
+      console.error('Stripe webhook handling error:', err);
+      return jsonResponse({ error: 'Webhook handling failed' }, 500);
     }
   }),
 });

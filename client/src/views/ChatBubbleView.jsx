@@ -1,13 +1,11 @@
 // View: Chat bubble input UI
 import {useState, useEffect, useRef} from 'react'
-import MessageController from '../controllers/MessageController'
 import '../index.css'
 
 const ChatBubbleView = () => {
   const [message, setMessage] = useState('')
   const [sizeMultiplier, setSizeMultiplier] = useState(1)
   const [attachedFiles, setAttachedFiles] = useState([]) // Array of { file, dataUrl, type, name }
-  const messageController = new MessageController()
 
   // Helper function to convert file to base64
   const fileToBase64 = (file) => {
@@ -102,14 +100,26 @@ const ChatBubbleView = () => {
       setMessage('')
       setAttachedFiles([])
       
+      const payload =
+        filesToSend.length > 0
+          ? (() => {
+              const imageNote = `[${filesToSend.length} image(s) attached]`
+              return messageText ? `${messageText} ${imageNote}` : imageNote
+            })()
+          : messageText
+
       // Send message with image count indicator
       // Note: Full image data would cause 431 errors (header too large)
       // For now, just send text with image count
-      if (filesToSend.length > 0) {
-        const imageNote = `[${filesToSend.length} image(s) attached]`
-        await messageController.sendMessage(messageText ? `${messageText} ${imageNote}` : imageNote)
-      } else {
-        await messageController.sendMessage(messageText)
+      if (!window.electronAPI?.sendMessage) {
+        console.warn('IPC not available (electronAPI missing)')
+        return
+      }
+
+      try {
+        await window.electronAPI.sendMessage(payload)
+      } catch (error) {
+        console.error('Error sending message:', error)
       }
     }
   }

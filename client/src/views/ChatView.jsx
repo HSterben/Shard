@@ -10,6 +10,9 @@ const ChatView = () => {
   const [inputValue, setInputValue] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(null); // null = checking, true/false = known
   const [authToken, setAuthToken] = useState(null);
+  const [subscriptionRequired, setSubscriptionRequired] = useState(false);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [stripePlans, setStripePlans] = useState({ monthly: null, yearly: null });
   const [attachedFiles, setAttachedFiles] = useState([]); // Array of { file, dataUrl, type }
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -75,6 +78,80 @@ const ChatView = () => {
     // Refresh failed - user needs to log in again
     setIsAuthenticated(false);
     return false;
+  };
+
+  const getConvexSiteBaseUrl = () => {
+    const convexUrl = CONVEX_URL.replace('https://', '').replace('.convex.cloud', '');
+    return `https://${convexUrl}.convex.site`;
+  };
+
+  const fetchStripePlans = async () => {
+    try {
+      const res = await fetch(`${getConvexSiteBaseUrl()}/stripe/plans`);
+      const data = await res.json().catch(() => ({}));
+      setStripePlans({
+        monthly: data.monthly || null,
+        yearly: data.yearly || null,
+      });
+    } catch (err) {
+      console.error('Failed to fetch Stripe plans:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (isAuthenticated === true) {
+      fetchStripePlans();
+    }
+  }, [isAuthenticated]);
+
+  const startCheckout = async (priceId) => {
+    if (!priceId) return;
+    if (!authToken) return;
+
+    setCheckoutLoading(true);
+    try {
+      const res = await fetch(`${getConvexSiteBaseUrl()}/stripe/create-checkout-session-auth`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ priceId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+
+      const url = data.url;
+      if (!url) throw new Error('No checkout URL returned.');
+
+      if (window.electronAPI?.openExternal) {
+        await window.electronAPI.openExternal(url);
+      } else {
+        window.location.href = url;
+      }
+    } catch (err) {
+      console.error('Failed to start checkout:', err);
+      alert(err instanceof Error ? err.message : 'Failed to start checkout');
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
+
+  const hasActiveSubscription = async () => {
+    const user = await convex.current.query(api.auth.getUser, {});
+    const workosId = user?.id;
+    const email = user?.email;
+
+    if (!workosId) {
+      return { active: false, reason: 'No user id found for this account.' };
+    }
+
+    const sub = await convex.current.query(api.subscriptions.getByWorkosId, { workosId });
+    const status = sub?.status;
+    const active = status === 'active' || status === 'trialing';
+    return { active, status, email, workosId };
   };
 
   // Helper function to convert file to base64
@@ -225,17 +302,84 @@ const ChatView = () => {
       let fullContent = '';
       let messageId = '';
       let finishReason = '';
+      let buffer = ''; // Buffer for incomplete lines
+      let chunkCount = 0; // Debug: count chunks received
+
+      console.log('Starting to read stream...');
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        
+        if (done) {
+          // Process any remaining buffered data
+          if (buffer.trim()) {
+            const lines = buffer.split('\n');
+            for (const line of lines) {
+              // Handle SSE format: "data: {...}" or just "data:"
+              if (line.startsWith('data: ')) {
+                const data = line.slice(6).trim();
+                if (data === '[DONE]') {
+                  break;
+                }
+                if (data) {
+                  try {
+                    const parsed = JSON.parse(data);
+                    const delta = parsed.choices?.[0]?.delta;
+                    
+                    // Handle content in delta
+                    if (delta?.content) {
+                      fullContent += delta.content;
+                      onChunk(delta.content);
+                    }
+                    
+                    // Also check for content in message (some APIs use this format)
+                    const message = parsed.choices?.[0]?.message;
+                    if (message?.content) {
+                      fullContent += message.content;
+                      onChunk(message.content);
+                    }
+
+                    if (parsed.id) messageId = parsed.id;
+                    if (parsed.choices?.[0]?.finish_reason) {
+                      finishReason = parsed.choices[0].finish_reason;
+                    }
+                  } catch (e) {
+                    // Check if it's an error message
+                    try {
+                      const errorData = JSON.parse(data);
+                      if (errorData.error) {
+                        throw new Error(errorData.error);
+                      }
+                    } catch (e2) {
+                      // Skip invalid JSON
+                      console.warn('Skipping invalid JSON in stream:', data.substring(0, 100));
+                    }
+                  }
+                }
+              }
+            }
+          }
+          break;
+        }
 
         const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        chunkCount++;
+        buffer += chunk;
+
+        // Process complete lines (those ending with \n)
+        const lines = buffer.split('\n');
+        // Keep the last incomplete line in buffer
+        buffer = lines.pop() || '';
+
+        // Debug: log first few chunks
+        if (chunkCount <= 3) {
+          console.log(`Chunk ${chunkCount} (${chunk.length} bytes):`, chunk.substring(0, 200));
+        }
 
         for (const line of lines) {
+          // Handle SSE format: "data: {...}" or just "data:"
           if (line.startsWith('data: ')) {
-            const data = line.slice(6);
+            const data = line.slice(6).trim();
             if (data === '[DONE]') {
               return {
                 content: fullContent,
@@ -244,25 +388,65 @@ const ChatView = () => {
               };
             }
 
-            try {
-              const parsed = JSON.parse(data);
-              const delta = parsed.choices?.[0]?.delta;
-              
-              if (delta?.content) {
-                fullContent += delta.content;
-                onChunk(delta.content); // Call the callback with each chunk
-              }
+            if (data) {
+              try {
+                const parsed = JSON.parse(data);
+                
+                // Log for debugging (can be removed later)
+                if (!parsed.choices?.[0]?.delta?.content && parsed.choices?.[0]) {
+                  console.log('Stream chunk structure:', {
+                    hasDelta: !!parsed.choices[0].delta,
+                    deltaKeys: parsed.choices[0].delta ? Object.keys(parsed.choices[0].delta) : [],
+                    hasMessage: !!parsed.choices[0].message,
+                    messageKeys: parsed.choices[0].message ? Object.keys(parsed.choices[0].message) : [],
+                  });
+                }
+                
+                const delta = parsed.choices?.[0]?.delta;
+                
+                // Handle content in delta
+                if (delta?.content) {
+                  fullContent += delta.content;
+                  onChunk(delta.content); // Call the callback with each chunk
+                }
+                
+                // Also check for content in message (some APIs use this format)
+                const message = parsed.choices?.[0]?.message;
+                if (message?.content) {
+                  fullContent += message.content;
+                  onChunk(message.content);
+                }
 
-              if (parsed.id) messageId = parsed.id;
-              if (parsed.choices?.[0]?.finish_reason) {
-                finishReason = parsed.choices[0].finish_reason;
+                if (parsed.id) messageId = parsed.id;
+                if (parsed.choices?.[0]?.finish_reason) {
+                  finishReason = parsed.choices[0].finish_reason;
+                }
+              } catch (e) {
+                // Check if it's an error message
+                try {
+                  const errorData = JSON.parse(data);
+                  if (errorData.error) {
+                    throw new Error(errorData.error);
+                  }
+                } catch (e2) {
+                  // Skip invalid JSON
+                  console.warn('Skipping invalid JSON in stream:', data.substring(0, 100));
+                }
               }
-            } catch (e) {
-              // Skip invalid JSON
             }
           }
         }
       }
+
+      // Log final state for debugging
+      console.log('Stream completed:', {
+        contentLength: fullContent.length,
+        messageId,
+        finishReason,
+        hasContent: !!fullContent,
+        chunksReceived: chunkCount,
+        finalBuffer: buffer.substring(0, 100),
+      });
 
       return {
         content: fullContent,
@@ -356,13 +540,26 @@ const ChatView = () => {
 
   // Get AI response for a message with streaming
   const getAIResponse = async (userMessage, files = []) => {
+    // Enforce subscription before calling the AI
+    try {
+      const sub = await hasActiveSubscription();
+      if (!sub.active) {
+        setSubscriptionRequired(true);
+        return;
+      }
+    } catch (error) {
+      console.error('Error checking subscription:', error);
+      setSubscriptionRequired(true);
+      return;
+    }
+
     setIsLoading(true);
     
     // Create a placeholder message that we'll update as we stream
     const aiMessageId = Date.now() + 1;
     const aiMessage = {
       id: aiMessageId,
-      text: ' ',
+      text: '',
       sender: 'ai',
       timestamp: new Date(),
       isStreaming: true
@@ -380,7 +577,6 @@ const ChatView = () => {
         'nvidia/nemotron-nano-12b-v2-vl:free',
         {
           temperature: 0.7,
-          maxTokens: 500,
         },
         (chunk) => {
           // Update message as chunks arrive
@@ -394,30 +590,45 @@ const ChatView = () => {
       );
 
       // Finalize the message
-      setMessages(prev => prev.map(msg => 
-        msg.id === aiMessageId 
-          ? { ...msg, text: response.content || fullContent, isStreaming: false }
-          : msg
-      ));
-      
-      // Update conversation context
       const finalContent = response.content || fullContent;
-      conversationContext.current = [
-        ...conversationContext.current,
-        { 
-          text: userMessage, 
-          sender: 'user',
-          images: files.length > 0 ? files.map(f => f.dataUrl) : undefined
-        },
-        { text: finalContent, sender: 'ai' }
-      ];
+      
+      // Check if we got any content
+      if (!finalContent || finalContent.trim() === '') {
+        // Remove the empty message and show error
+        setMessages(prev => prev.filter(msg => msg.id !== aiMessageId));
+        const errorMessage = {
+          id: Date.now() + 1,
+          text: 'Error: Received empty response from the AI. Please try again.',
+          sender: 'ai',
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, errorMessage]);
+      } else {
+        // Update with final content
+        setMessages(prev => prev.map(msg => 
+          msg.id === aiMessageId 
+            ? { ...msg, text: finalContent.trim(), isStreaming: false }
+            : msg
+        ));
+        
+        // Update conversation context
+        conversationContext.current = [
+          ...conversationContext.current,
+          { 
+            text: userMessage, 
+            sender: 'user',
+            images: files.length > 0 ? files.map(f => f.dataUrl) : undefined
+          },
+          { text: finalContent.trim(), sender: 'ai' }
+        ];
+      }
     } catch (error) {
       console.error('Error getting AI response:', error);
       // Remove the streaming message and add error message
       setMessages(prev => prev.filter(msg => msg.id !== aiMessageId));
       const errorMessage = {
         id: Date.now() + 1,
-        text: `Error: ${error instanceof Error ? error.message : 'Failed to get response'}`,
+        text: `Error: ${error instanceof Error ? error.message : 'Failed to get response. Please try again.'}`,
         sender: 'ai',
         timestamp: new Date()
       };
@@ -690,6 +901,58 @@ const ChatView = () => {
     );
   }
 
+  // Show subscription screen if required
+  if (subscriptionRequired) {
+    return (
+      <div className="chat-view">
+        <div className="chat-title-bar">
+          <span className="chat-title-text">Shard</span>
+          <button className="chat-close-button" onClick={handleClose} aria-label="Close chat">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+
+        <div className="chat-auth-container">
+          <div className="chat-auth-content">
+            <h2>Subscription required</h2>
+            <p>Please subscribe to continue using AI features.</p>
+
+            <button
+              className="chat-login-button"
+              onClick={() => startCheckout(stripePlans.monthly)}
+              disabled={checkoutLoading || !stripePlans.monthly}
+            >
+              {checkoutLoading ? 'Opening Checkout...' : 'Subscribe (Monthly)'}
+            </button>
+
+            <button
+              className="chat-login-button"
+              onClick={() => startCheckout(stripePlans.yearly)}
+              disabled={checkoutLoading || !stripePlans.yearly}
+              style={{ marginTop: 10 }}
+            >
+              {checkoutLoading ? 'Opening Checkout...' : 'Subscribe (Yearly)'}
+            </button>
+
+            <button
+              className="chat-close-button"
+              onClick={async () => {
+                setSubscriptionRequired(false);
+                await getAIResponse(messages[0]?.text || '');
+              }}
+              style={{ marginTop: 16 }}
+            >
+              I already subscribed (retry)
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Show loading state while checking auth
   if (isAuthenticated === null) {
     return (
@@ -764,7 +1027,7 @@ const ChatView = () => {
                       ))}
                     </div>
                   )}
-                  {msg.text && (
+                  {(msg.text || msg.isStreaming) && (
                     <div className="message-text">
                       {msg.text}
                       {msg.isStreaming && <span className="streaming-cursor">▋</span>}
