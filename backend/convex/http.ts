@@ -571,7 +571,8 @@ http.route({
 
     try {
       const body = await req.json();
-      const { messages, model, systemInstruction, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stop } = body;
+      const { messages, model, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stop } = body;
+      const systemInstruction = body.systemInstruction ?? body.system_instruction;
 
       if (!model) {
         return new Response(

@@ -22,4 +22,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('auth-error', (event, data) => callback(data));
   },
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
+
+  // Presets JSON (word -> systemInstruction, temperature, etc.); path is user-configurable
+  getPresetsPath: () => ipcRenderer.invoke('get-presets-path'),
+  setPresetsPath: (filePath) => ipcRenderer.invoke('set-presets-path', filePath),
+  readPresets: () => ipcRenderer.invoke('read-presets'),
 });

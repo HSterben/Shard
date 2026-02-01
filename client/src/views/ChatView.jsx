@@ -1,35 +1,110 @@
 // View: Chat display UI
 import { useState, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { ConvexClient } from 'convex/browser';
 import { api } from '../../../backend/convex/_generated/api';
 import './ChatView.css';
 
+// ——— Constants ———
+const CONVEX_URL = 'https://elegant-greyhound-73.convex.cloud';
+const DEFAULT_SYSTEM_INSTRUCTION =
+  'You are Shard, an expert AI assistant. Be concise and helpful. Always provide clear, accurate information and assist the user to the best of your ability.'
+const DEFAULT_MODEL = 'nvidia/nemotron-nano-12b-v2-vl:free';
+
+const getConvexSiteBaseUrl = () => {
+  const base = CONVEX_URL.replace('https://', '').replace('.convex.cloud', '');
+  return `https://${base}.convex.site`;
+};
+
+// ——— Title bar (shared) ———
+const TitleBar = ({ onClose }) => (
+  <div className="chat-title-bar">
+    <span className="chat-title-text">Shard</span>
+    <button className="chat-close-button" onClick={onClose} aria-label="Close chat">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+      </svg>
+    </button>
+  </div>
+);
+
 const ChatView = () => {
+  // State
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [inputValue, setInputValue] = useState('');
-  const [isAuthenticated, setIsAuthenticated] = useState(null); // null = checking, true/false = known
+  const [isAuthenticated, setIsAuthenticated] = useState(null);
   const [authToken, setAuthToken] = useState(null);
   const [subscriptionRequired, setSubscriptionRequired] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [stripePlans, setStripePlans] = useState({ monthly: null, yearly: null });
-  const [attachedFiles, setAttachedFiles] = useState([]); // Array of { file, dataUrl, type }
+  const [attachedFiles, setAttachedFiles] = useState([]);
+  const [presets, setPresets] = useState({});
+
+  // Refs
+  const convex = useRef(new ConvexClient(CONVEX_URL));
+  const conversationContext = useRef([]);
+  const sessionOptionsRef = useRef(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
-  const conversationContext = useRef([]); // Store conversation history for context
-  
-  // Initialize Convex client
-  const CONVEX_URL = 'https://elegant-greyhound-73.convex.cloud';
-  const convex = useRef(new ConvexClient(CONVEX_URL));
 
-  // Check authentication on mount
+  // ——— Effects ———
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.electronAPI?.readPresets) {
+      window.electronAPI
+        .readPresets()
+        .then((result) => {
+          if (result?.success && result.presets) setPresets(result.presets);
+        })
+        .catch((err) => console.error('Failed to load presets:', err));
+    }
+  }, []);
+
+  // Presets: loaded on mount from JSON file via electronAPI.readPresets().
+  // presetsOverride: use when presets were just loaded in getAIResponse to avoid race.
+  const getOptionsForMessage = (message, presetsOverride) => {
+    const presetsMap = presetsOverride ?? presets;
+    const base = {
+      systemInstruction: DEFAULT_SYSTEM_INSTRUCTION,
+      temperature: 0.5,
+      maxTokens: 1024,
+      topP: 0.95,
+      frequencyPenalty: 0.0,
+      presencePenalty: 0.3,
+      stop: undefined,
+    };
+    const rawFirst = (message || '').trim().split(/\s+/)[0] || '';
+    const firstWord = rawFirst.replace(/\W/g, ''); // strip punctuation so "Simplify," matches "Simplify"
+    if (!firstWord || !presetsMap || Object.keys(presetsMap).length === 0) return base;
+    const key = Object.keys(presetsMap).find(
+      (k) => k.toLowerCase() === firstWord.toLowerCase()
+    );
+    if (!key) return base;
+    const p = presetsMap[key];
+    const systemInstructionRaw = p.systemInstruction ?? p.system_instruction;
+    const systemInstruction =
+      systemInstructionRaw != null && String(systemInstructionRaw).trim() !== ''
+        ? String(systemInstructionRaw).trim()
+        : DEFAULT_SYSTEM_INSTRUCTION;
+    return {
+      ...base,
+      systemInstruction,
+      temperature: p.temperature != null ? p.temperature : 0.7,
+      maxTokens: p.maxTokens != null ? p.maxTokens : 1024,
+      topP: p.topP != null ? p.topP : 0.95,
+      frequencyPenalty: p.frequencyPenalty != null ? p.frequencyPenalty : 0.0,
+      presencePenalty: p.presencePenalty != null ? p.presencePenalty : 0.3,
+      stop: p.stop != null ? p.stop : undefined,
+    };
+  };
+
   useEffect(() => {
     const checkAuth = async () => {
       try {
         const token = await window.electronAPI.getAuthToken();
         if (token) {
           setAuthToken(token);
-          // setAuth expects a function that returns the token
           convex.current.setAuth(async () => token);
           setIsAuthenticated(true);
         } else {
@@ -55,8 +130,6 @@ const ChatView = () => {
         setIsAuthenticated(false);
       }
     });
-
-    // Listen for auth error events
     window.electronAPI.onAuthError((data) => {
       console.error('Auth error:', data.message);
       setIsAuthenticated(false);
@@ -75,14 +148,8 @@ const ChatView = () => {
     } catch (err) {
       console.error('Failed to refresh token:', err);
     }
-    // Refresh failed - user needs to log in again
     setIsAuthenticated(false);
     return false;
-  };
-
-  const getConvexSiteBaseUrl = () => {
-    const convexUrl = CONVEX_URL.replace('https://', '').replace('.convex.cloud', '');
-    return `https://${convexUrl}.convex.site`;
   };
 
   const fetchStripePlans = async () => {
@@ -154,7 +221,6 @@ const ChatView = () => {
     return { active, status, email, workosId };
   };
 
-  // Helper function to convert file to base64
   const fileToBase64 = (file) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -164,11 +230,7 @@ const ChatView = () => {
     });
   };
 
-  // Helper function to convert PDF to image (simplified - shows placeholder)
-  // Note: For full PDF support, consider using pdf.js library
   const pdfToImage = async (file) => {
-    // For now, we'll create a placeholder image for PDFs
-    // In production, you might want to use pdf.js to render PDF pages as images
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     canvas.width = 800;
@@ -199,63 +261,31 @@ const ChatView = () => {
     };
   };
 
-  // Function to call OpenRouter API with streaming
-  const askOpenRouterStream = async (message = '', files = [], model = 'nvidia/nemotron-nano-12b-v2-vl:free', options = {}, onChunk, isRetry = false) => {
-    // Build messages array with conversation context
-    const contextMessages = conversationContext.current.map(msg => {
-      if (msg.images && msg.images.length > 0) {
-        // Handle multimodal message with images
+  const buildContextMessages = (message, files) => {
+    const out = conversationContext.current.map((msg) => {
+      const role = msg.sender === 'user' ? 'user' : 'assistant';
+      if (msg.images?.length > 0) {
         const content = [{ type: 'text', text: msg.text }];
-        msg.images.forEach(img => {
-          content.push({
-            type: 'image_url',
-            image_url: { url: img }
-          });
-        });
-        return {
-          role: msg.sender === 'user' ? 'user' : 'assistant',
-          content: content
-        };
+        msg.images.forEach((img) => content.push({ type: 'image_url', image_url: { url: img } }));
+        return { role, content };
       }
-      return {
-        role: msg.sender === 'user' ? 'user' : 'assistant',
-        content: msg.text
-      };
+      return { role, content: msg.text };
     });
-    
-    // Build current message with images if any
-    let currentMessageContent;
-    if (files.length > 0) {
-      currentMessageContent = [{ type: 'text', text: message || '' }];
-      for (const fileData of files) {
-        currentMessageContent.push({
-          type: 'image_url',
-          image_url: { url: fileData.dataUrl }
-        });
-      }
-    } else {
-      currentMessageContent = message;
-    }
-    
-    // Add current message
-    contextMessages.push({
-      role: 'user',
-      content: currentMessageContent
-    });
+    const currentContent =
+      files.length > 0
+        ? [{ type: 'text', text: message || '' }, ...files.map((f) => ({ type: 'image_url', image_url: { url: f.dataUrl } }))]
+        : message;
+    out.push({ role: 'user', content: currentContent });
+    return out;
+  };
+
+  const askOpenRouterStream = async (message, files, model, options, onChunk, isRetry = false) => {
+    const contextMessages = buildContextMessages(message, files);
 
     try {
-      // Ensure we have auth token
-      if (!authToken) {
-        throw new Error('Authentication token not available. Please log in.');
-      }
+      if (!authToken) throw new Error('Authentication token not available. Please log in.');
 
-      // Get Convex URL and auth token
-      const convexUrl = CONVEX_URL.replace('https://', '').replace('.convex.cloud', '');
-      const streamUrl = `https://${convexUrl}.convex.site/openrouter/stream`;
-      
-      console.log('Calling streaming endpoint:', streamUrl);
-      
-      // Call streaming endpoint
+      const streamUrl = `${getConvexSiteBaseUrl()}/openrouter/stream`;
       const response = await fetch(streamUrl, {
         method: 'POST',
         headers: {
@@ -265,7 +295,7 @@ const ChatView = () => {
         body: JSON.stringify({
           messages: contextMessages,
           model,
-          systemInstruction: 'Start every sentence with "Hey, I\'m Shard, your personal assistant."',
+          systemInstruction: options.systemInstruction ?? DEFAULT_SYSTEM_INSTRUCTION,
           temperature: options.temperature,
           maxTokens: options.maxTokens,
           topP: options.topP,
@@ -281,7 +311,6 @@ const ChatView = () => {
         
         // Check if it's an authentication error and we haven't retried yet
         if (!isRetry && (response.status === 401 || errorMessage.includes('Authentication'))) {
-          console.log('Auth error detected in stream, attempting token refresh...');
           const refreshed = await refreshAndRetry();
           if (refreshed) {
             // Retry the request with the new token
@@ -302,10 +331,7 @@ const ChatView = () => {
       let fullContent = '';
       let messageId = '';
       let finishReason = '';
-      let buffer = ''; // Buffer for incomplete lines
-      let chunkCount = 0; // Debug: count chunks received
-
-      console.log('Starting to read stream...');
+      let buffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -350,10 +376,7 @@ const ChatView = () => {
                       if (errorData.error) {
                         throw new Error(errorData.error);
                       }
-                    } catch (e2) {
-                      // Skip invalid JSON
-                      console.warn('Skipping invalid JSON in stream:', data.substring(0, 100));
-                    }
+                    } catch (_e2) {}
                   }
                 }
               }
@@ -362,19 +385,9 @@ const ChatView = () => {
           break;
         }
 
-        const chunk = decoder.decode(value, { stream: true });
-        chunkCount++;
-        buffer += chunk;
-
-        // Process complete lines (those ending with \n)
+        buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        // Keep the last incomplete line in buffer
         buffer = lines.pop() || '';
-
-        // Debug: log first few chunks
-        if (chunkCount <= 3) {
-          console.log(`Chunk ${chunkCount} (${chunk.length} bytes):`, chunk.substring(0, 200));
-        }
 
         for (const line of lines) {
           // Handle SSE format: "data: {...}" or just "data:"
@@ -391,17 +404,6 @@ const ChatView = () => {
             if (data) {
               try {
                 const parsed = JSON.parse(data);
-                
-                // Log for debugging (can be removed later)
-                if (!parsed.choices?.[0]?.delta?.content && parsed.choices?.[0]) {
-                  console.log('Stream chunk structure:', {
-                    hasDelta: !!parsed.choices[0].delta,
-                    deltaKeys: parsed.choices[0].delta ? Object.keys(parsed.choices[0].delta) : [],
-                    hasMessage: !!parsed.choices[0].message,
-                    messageKeys: parsed.choices[0].message ? Object.keys(parsed.choices[0].message) : [],
-                  });
-                }
-                
                 const delta = parsed.choices?.[0]?.delta;
                 
                 // Handle content in delta
@@ -422,31 +424,15 @@ const ChatView = () => {
                   finishReason = parsed.choices[0].finish_reason;
                 }
               } catch (e) {
-                // Check if it's an error message
                 try {
-                  const errorData = JSON.parse(data);
-                  if (errorData.error) {
-                    throw new Error(errorData.error);
-                  }
-                } catch (e2) {
-                  // Skip invalid JSON
-                  console.warn('Skipping invalid JSON in stream:', data.substring(0, 100));
-                }
+                  const err = JSON.parse(data);
+                  if (err.error) throw new Error(err.error);
+                } catch (_e2) {}
               }
             }
           }
         }
       }
-
-      // Log final state for debugging
-      console.log('Stream completed:', {
-        contentLength: fullContent.length,
-        messageId,
-        finishReason,
-        hasContent: !!fullContent,
-        chunksReceived: chunkCount,
-        finalBuffer: buffer.substring(0, 100),
-      });
 
       return {
         content: fullContent,
@@ -463,82 +449,6 @@ const ChatView = () => {
     }
   };
 
-  // Function to call OpenRouter API via Convex (non-streaming, kept for fallback)
-  const askOpenRouter = async (message = '', files = [], model = 'nvidia/nemotron-nano-12b-v2-vl:free', options = {}, isRetry = false) => {
-    // Build messages array with conversation context
-    const contextMessages = conversationContext.current.map(msg => {
-      if (msg.images && msg.images.length > 0) {
-        // Handle multimodal message with images
-        const content = [{ type: 'text', text: msg.text }];
-        msg.images.forEach(img => {
-          content.push({
-            type: 'image_url',
-            image_url: { url: img }
-          });
-        });
-        return {
-          role: msg.sender === 'user' ? 'user' : 'assistant',
-          content: content
-        };
-      }
-      return {
-        role: msg.sender === 'user' ? 'user' : 'assistant',
-        content: msg.text
-      };
-    });
-    
-    // Build current message with images if any
-    let currentMessageContent;
-    if (files.length > 0) {
-      currentMessageContent = [{ type: 'text', text: message || '' }];
-      for (const fileData of files) {
-        currentMessageContent.push({
-          type: 'image_url',
-          image_url: { url: fileData.dataUrl }
-        });
-      }
-    } else {
-      currentMessageContent = message;
-    }
-    
-    // Add current message
-    contextMessages.push({
-      role: 'user',
-      content: currentMessageContent
-    });
-
-    try {
-      // Call Convex action
-      const response = await convex.current.action(api.openrouter.sendMessage, {
-        messages: contextMessages,
-        model,
-        systemInstruction: 'Start every sentence with "Hey, I\'m Shard, your personal assistant."',
-        temperature: options.temperature,
-        maxTokens: options.maxTokens,
-        topP: options.topP,
-        frequencyPenalty: options.frequencyPenalty,
-        presencePenalty: options.presencePenalty,
-        stop: options.stop,
-        stream: options.stream,
-      });
-
-      return response;
-    } catch (error) {
-      // Check if it's an authentication error and we haven't retried yet
-      if (!isRetry && error.message && error.message.includes('Authentication required')) {
-        console.log('Auth error detected, attempting token refresh...');
-        const refreshed = await refreshAndRetry();
-        if (refreshed) {
-          // Retry the request with the new token
-          return askOpenRouter(message, files, model, options, true);
-        }
-      }
-      // Re-throw if not an auth error or retry failed
-      throw error;
-    }
-  };
-
-  // Get AI response for a message with streaming
   const getAIResponse = async (userMessage, files = []) => {
     // Enforce subscription before calling the AI
     try {
@@ -570,14 +480,23 @@ const ChatView = () => {
 
     try {
       let fullContent = '';
-      
+      if (sessionOptionsRef.current === null) {
+        let presetsToUse = presets;
+        if (Object.keys(presetsToUse).length === 0 && window.electronAPI?.readPresets) {
+          const result = await window.electronAPI.readPresets();
+          if (result?.success && result.presets && Object.keys(result.presets).length > 0) {
+            presetsToUse = result.presets;
+            setPresets(result.presets);
+          }
+        }
+        sessionOptionsRef.current = getOptionsForMessage(userMessage, presetsToUse);
+      }
+      const options = sessionOptionsRef.current;
       const response = await askOpenRouterStream(
         userMessage,
         files,
-        'nvidia/nemotron-nano-12b-v2-vl:free',
-        {
-          temperature: 0.7,
-        },
+        DEFAULT_MODEL,
+        options,
         (chunk) => {
           // Update message as chunks arrive
           fullContent += chunk;
@@ -639,7 +558,6 @@ const ChatView = () => {
   };
 
   useEffect(() => {
-    // Get initial message from URL query parameter
     const urlParams = new URLSearchParams(window.location.search);
     const encodedData = urlParams.get('data');
     
@@ -683,82 +601,35 @@ const ChatView = () => {
   }, [isAuthenticated]);
 
   useEffect(() => {
-    // Scroll to bottom when messages change (including during streaming)
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Handle clipboard paste for images
   useEffect(() => {
     const handlePaste = async (e) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-
-      // Look for image in clipboard
-      let hasImage = false;
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        
-        // Check if it's an image
-        if (item.type.indexOf('image') !== -1) {
-          hasImage = true;
-          e.preventDefault(); // Prevent default paste behavior for images
-          
-          const file = item.getAsFile();
-          if (!file) continue;
-
-          try {
-            // Convert to base64
-            const dataUrl = await fileToBase64(file);
-            
-            // Create a file data object
-            const fileData = {
-              file,
-              dataUrl,
-              type: file.type,
-              name: `pasted-image-${Date.now()}.${file.type.split('/')[1] || 'png'}`
-            };
-
-            // Add to attached files
-            setAttachedFiles(prev => [...prev, fileData]);
-          } catch (error) {
-            console.error('Error pasting image:', error);
-          }
-          break; // Only handle the first image found
+      for (const item of e.clipboardData?.items ?? []) {
+        if (item.type.indexOf('image') === -1) continue;
+        const file = item.getAsFile();
+        if (!file) continue;
+        e.preventDefault();
+        try {
+          const dataUrl = await fileToBase64(file);
+          setAttachedFiles((prev) => [
+            ...prev,
+            { file, dataUrl, type: file.type, name: `pasted-${Date.now()}.${file.type.split('/')[1] || 'png'}` },
+          ]);
+        } catch (err) {
+          console.error('Error pasting image:', err);
         }
+        break;
       }
-
-      // If no image was found, allow normal paste behavior (text, etc.)
-      // This happens automatically if we don't preventDefault
     };
-
-    // Add paste event listener to the document
-    // This will capture paste events anywhere in the chat view
     document.addEventListener('paste', handlePaste);
-    
-    return () => {
-      document.removeEventListener('paste', handlePaste);
-    };
+    return () => document.removeEventListener('paste', handlePaste);
   }, []);
 
-  const handleClose = () => {
-    if (window.electronAPI && window.electronAPI.closeMessageWindow) {
-      window.electronAPI.closeMessageWindow();
-    }
-  };
-
-  const handleLogin = () => {
-    if (window.electronAPI && window.electronAPI.openLogin) {
-      window.electronAPI.openLogin();
-    }
-  };
-
-  const formatTime = (date) => {
-    return date.toLocaleTimeString('en-US', { 
-      hour: 'numeric', 
-      minute: '2-digit',
-      hour12: true 
-    });
-  };
+  const handleClose = () => window.electronAPI?.closeMessageWindow?.();
+  const handleLogin = () => window.electronAPI?.openLogin?.();
+  const formatTime = (date) => date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 
   const handleFileSelect = async (e) => {
     const files = Array.from(e.target.files);
@@ -866,24 +737,10 @@ const ChatView = () => {
     await getAIResponse(messageText || '', filesToSend);
   };
 
-  // Show login screen if not authenticated
   if (isAuthenticated === false) {
     return (
       <div className="chat-view">
-        <div className="chat-title-bar">
-          <span className="chat-title-text">Shard</span>
-          <button 
-            className="chat-close-button"
-            onClick={handleClose}
-            aria-label="Close chat"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
-        </div>
-        
+        <TitleBar onClose={handleClose} />
         <div className="chat-auth-container">
           <div className="chat-auth-content">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -901,20 +758,10 @@ const ChatView = () => {
     );
   }
 
-  // Show subscription screen if required
   if (subscriptionRequired) {
     return (
       <div className="chat-view">
-        <div className="chat-title-bar">
-          <span className="chat-title-text">Shard</span>
-          <button className="chat-close-button" onClick={handleClose} aria-label="Close chat">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
-        </div>
-
+        <TitleBar onClose={handleClose} />
         <div className="chat-auth-container">
           <div className="chat-auth-content">
             <h2>Subscription required</h2>
@@ -953,24 +800,10 @@ const ChatView = () => {
     );
   }
 
-  // Show loading state while checking auth
   if (isAuthenticated === null) {
     return (
       <div className="chat-view">
-        <div className="chat-title-bar">
-          <span className="chat-title-text">Shard</span>
-          <button 
-            className="chat-close-button"
-            onClick={handleClose}
-            aria-label="Close chat"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-          </button>
-        </div>
-        
+        <TitleBar onClose={handleClose} />
         <div className="chat-auth-container">
           <div className="chat-auth-content">
             <div className="chat-loading-spinner"></div>
@@ -983,20 +816,7 @@ const ChatView = () => {
 
   return (
     <div className="chat-view">
-      <div className="chat-title-bar">
-        <span className="chat-title-text">Shard</span>
-        <button 
-          className="chat-close-button"
-          onClick={handleClose}
-          aria-label="Close chat"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
-      </div>
-      
+      <TitleBar onClose={handleClose} />
       <div className="chat-messages">
         {messages.length === 0 ? (
           <div className="chat-empty">Start a conversation...</div>
@@ -1028,8 +848,12 @@ const ChatView = () => {
                     </div>
                   )}
                   {(msg.text || msg.isStreaming) && (
-                    <div className="message-text">
-                      {msg.text}
+                    <div className="message-text message-text-markdown">
+                      {msg.sender === 'ai' ? (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text || ''}</ReactMarkdown>
+                      ) : (
+                        msg.text
+                      )}
                       {msg.isStreaming && <span className="streaming-cursor">▋</span>}
                     </div>
                   )}

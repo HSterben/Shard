@@ -174,4 +174,3 @@ export const updateByStripeSubscriptionId = mutation({
     return existing._id;
   },
 });
-

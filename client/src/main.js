@@ -10,6 +10,7 @@ import {
   shell,
 } from "electron";
 import path from "node:path";
+import fs from "node:fs/promises";
 import started from "electron-squirrel-startup";
 import Store from "electron-store";
 
@@ -23,6 +24,35 @@ const store = new Store({
   name: "shard-auth",
   encryptionKey: "shard-secure-storage-key-2024",
 });
+
+// App config (no encryption) for presets file path
+const configStore = new Store({ name: "shard-config" });
+const PRESETS_PATH_KEY = "presetsPath";
+
+function getDefaultPresetsPath() {
+  return path.join(app.getPath("userData"), "shard-presets.json");
+}
+
+function getPresetsPathsToTry() {
+  const custom = configStore.get(PRESETS_PATH_KEY);
+  if (custom) return [custom];
+  const primary = getDefaultPresetsPath();
+  if (process.platform === "win32") {
+    const roaming = path.join(process.env.APPDATA || "", "shard", "shard-presets.json");
+    if (roaming) return [roaming, primary];
+  }
+  return [primary];
+}
+
+const DEFAULT_PRESETS = {
+  Simplify: {
+    description: "Simplify the following text.",
+    systemInstruction: "You are a helpful assistant that simplifies text. Use shorter sentences and plain language.",
+    temperature: 0.3,
+    frequencyPenalty: 0,
+    presencePenalty: 0,
+  },
+};
 
 // Auth configuration
 // Note: .convex.cloud is for queries/mutations, .convex.site is for HTTP endpoints
@@ -448,6 +478,45 @@ ipcMain.handle("refresh-auth-token", async () => {
     return { success: true, token: newToken };
   }
   return { success: false, token: null };
+});
+
+// Presets: JSON file (word -> AI options). Path is user-configurable.
+ipcMain.handle("get-presets-path", async () => {
+  return configStore.get(PRESETS_PATH_KEY) || getDefaultPresetsPath();
+});
+
+ipcMain.handle("set-presets-path", async (_event, newPath) => {
+  if (typeof newPath !== "string" || !newPath.trim()) return { success: false, error: "Invalid path" };
+  configStore.set(PRESETS_PATH_KEY, newPath.trim());
+  return { success: true };
+});
+
+ipcMain.handle("read-presets", async () => {
+  const pathsToTry = getPresetsPathsToTry();
+  let lastError = null;
+  for (const presetsPath of pathsToTry) {
+    if (!presetsPath) continue;
+    try {
+      const data = await fs.readFile(presetsPath, "utf8");
+      const presets = JSON.parse(data) || {};
+      if (Object.keys(presets).length > 0) {
+        return { success: true, presets };
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  const presetsPath = pathsToTry[0];
+  if (lastError?.code === "ENOENT") {
+    try {
+      await fs.mkdir(path.dirname(presetsPath), { recursive: true });
+      await fs.writeFile(presetsPath, JSON.stringify(DEFAULT_PRESETS, null, 2), "utf8");
+      return { success: true, presets: DEFAULT_PRESETS };
+    } catch (writeErr) {
+      return { success: false, error: writeErr.message, presets: DEFAULT_PRESETS };
+    }
+  }
+  return { success: false, error: lastError?.message || "Failed to read presets", presets: {} };
 });
 
 // Existing IPC Handlers
