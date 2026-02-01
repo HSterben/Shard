@@ -8,6 +8,7 @@ import {
   screen,
   ipcMain,
   shell,
+  dialog,
 } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -25,9 +26,24 @@ const store = new Store({
   encryptionKey: "shard-secure-storage-key-2024",
 });
 
-// App config (no encryption) for presets file path
+// App config (no encryption) for presets and window settings
 const configStore = new Store({ name: "shard-config" });
 const PRESETS_PATH_KEY = "presetsPath";
+const KEYBIND_KEY = "keybind";
+const WINDOW_SIZE_KEY = "windowSize";
+const WINDOW_POSITION_KEY = "windowPosition";
+
+const SIZE_PRESETS = {
+  XSmall: 0.08,
+  Small: 0.12,
+  Regular: 0.20,   // was XLarge
+  Large: 0.28,
+  XLarge: 0.36,
+};
+const SIZE_LABELS = ["XSmall", "Small", "Regular", "Large", "XLarge"];
+const POSITION_OPTIONS = ["bottom-right", "bottom-left", "top-right", "top-left"];
+const DEFAULT_KEYBIND = "CommandOrControl+Alt+I";
+const MARGIN = 20;
 
 function getDefaultPresetsPath() {
   return path.join(app.getPath("userData"), "shard-presets.json");
@@ -247,48 +263,58 @@ const fadeOut = (window, callback) => {
   }, 16); // ~60fps
 };
 
-// Calculate window dimensions based on screen width percentage
-const calculateWindowSize = (screenWidth) => {
-  // Use 12.5% of screen width (middle of 10-15% range)
-  const sizePercentage = 0.125;
-  const aspectRatio = 56 / 420; // height/width ratio
+function getWindowSizePreset() {
+  return configStore.get(WINDOW_SIZE_KEY) || "Regular";
+}
 
-  // Calculate width with min/max bounds
-  let windowWidth = screenWidth * sizePercentage;
-  const minWidth = 380;
-  const maxWidth = 700;
-  windowWidth = Math.max(minWidth, Math.min(maxWidth, windowWidth));
+function getWindowPositionPreset() {
+  return configStore.get(WINDOW_POSITION_KEY) || "bottom-right";
+}
 
-  // Calculate height maintaining aspect ratio
-  const windowHeight = windowWidth * aspectRatio;
+const ASPECT_RATIO = 56 / 420;
 
-  return { width: Math.round(windowWidth), height: Math.round(windowHeight) };
-};
+function calculateWindowSize(screenWidth) {
+  const sizeKey = getWindowSizePreset();
+  const sizePercentage = SIZE_PRESETS[sizeKey] ?? SIZE_PRESETS.Regular;
+  const windowWidth = Math.round(screenWidth * sizePercentage);
+  const windowHeight = Math.round(windowWidth * ASPECT_RATIO);
+  return { width: windowWidth, height: windowHeight };
+}
+
+function getWindowPositionXY(workArea, width, height) {
+  const { x: wx, y: wy, width: ww, height: wh } = workArea;
+  const pos = getWindowPositionPreset();
+  switch (pos) {
+    case "bottom-left":
+      return { x: wx + MARGIN, y: wy + wh - height - MARGIN };
+    case "top-right":
+      return { x: wx + ww - width - MARGIN, y: wy + MARGIN };
+    case "top-left":
+      return { x: wx + MARGIN, y: wy + MARGIN };
+    default:
+      return { x: wx + ww - width - MARGIN, y: wy + wh - height - MARGIN };
+  }
+}
 
 const createWindow = () => {
-  // Get screen dimensions first
   const primaryDisplay = screen.getPrimaryDisplay();
-  const { width: screenWidth } = primaryDisplay.workAreaSize;
-  const { width, height } = calculateWindowSize(screenWidth);
+  const workArea = primaryDisplay.workArea;
+  const { width, height } = calculateWindowSize(workArea.width);
+  const { x, y } = getWindowPositionXY(workArea, width, height);
 
-  // Create the browser window.
   mainWindow = new BrowserWindow({
     width,
     height,
-    show: false, // Start hidden
-    frame: false, // Remove title bar
-    transparent: true, // Make window transparent
-    resizable: false, // Prevent resizing
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
     alwaysOnTop: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
     },
   });
 
-  // Position window at bottom-right of screen
-  const { height: screenHeight } = primaryDisplay.workAreaSize;
-  const x = screenWidth - width - 20;
-  const y = screenHeight - height - 20;
   mainWindow.setPosition(x, y);
 
   // and load the index.html of the app.
@@ -334,20 +360,12 @@ const toggleWindow = () => {
         isToggling = false;
       });
     } else {
-      // Recalculate position in case screen size changed
       isToggling = true;
       const primaryDisplay = screen.getPrimaryDisplay();
-      const { width: screenWidth, height: screenHeight } =
-        primaryDisplay.workAreaSize;
-      const { width, height } = calculateWindowSize(screenWidth);
-
-      // Update window size if needed
-      mainWindow.setSize(width, height);
-
-      // Position window at bottom-right of screen
-      const x = screenWidth - width - 20;
-      const y = screenHeight - height - 20;
-      mainWindow.setPosition(x, y);
+      const workArea = primaryDisplay.workArea;
+      const { width, height } = calculateWindowSize(workArea.width);
+      const { x, y } = getWindowPositionXY(workArea, width, height);
+      mainWindow.setBounds({ x, y, width, height });
 
       // Show window with fade-in animation
       mainWindow.setOpacity(0);
@@ -402,6 +420,13 @@ const createTray = () => {
       type: "separator",
     },
     {
+      label: "Settings",
+      click: createSettingsWindow,
+    },
+    {
+      type: "separator",
+    },
+    {
       label: "Quit",
       click: () => {
         app.isQuitting = true;
@@ -416,6 +441,49 @@ const createTray = () => {
   // Also allow clicking the tray icon to toggle window
   tray.on("click", toggleWindow);
 };
+
+function registerKeybind() {
+  globalShortcut.unregisterAll();
+  const accel = configStore.get(KEYBIND_KEY) || DEFAULT_KEYBIND;
+  try {
+    globalShortcut.register(accel, toggleWindow);
+  } catch (e) {
+    console.warn("Failed to register keybind:", accel, e);
+    configStore.set(KEYBIND_KEY, DEFAULT_KEYBIND);
+    globalShortcut.register(DEFAULT_KEYBIND, toggleWindow);
+  }
+}
+
+let settingsWindow = null;
+function createSettingsWindow() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus();
+    return;
+  }
+  settingsWindow = new BrowserWindow({
+    width: 480,
+    height: 560,
+    show: false,
+    frame: false,
+    title: "Shard Settings",
+    backgroundColor: "#000000",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+    },
+  });
+  settingsWindow.on("closed", () => { settingsWindow = null; });
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    settingsWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL + "/settings.html");
+  } else {
+    settingsWindow.loadFile(
+      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/settings.html`)
+    );
+  }
+  settingsWindow.once("ready-to-show", () => {
+    settingsWindow.show();
+    settingsWindow.focus();
+  });
+}
 
 // Auth IPC Handlers
 ipcMain.handle("get-auth-token", async () => {
@@ -519,6 +587,90 @@ ipcMain.handle("read-presets", async () => {
   return { success: false, error: lastError?.message || "Failed to read presets", presets: {} };
 });
 
+function getBundledPresetsPath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "shard-presets.json");
+  }
+  return path.join(app.getAppPath(), "shard-presets.json");
+}
+
+ipcMain.handle("get-bundled-presets-path", async () => getBundledPresetsPath());
+
+ipcMain.handle("set-presets-path-to-default", async () => {
+  configStore.set(PRESETS_PATH_KEY, getBundledPresetsPath());
+  return { success: true };
+});
+
+ipcMain.handle("export-presets", async () => {
+  const pathsToTry = getPresetsPathsToTry();
+  let content = "{}";
+  for (const p of pathsToTry) {
+    try {
+      content = await fs.readFile(p, "utf8");
+      break;
+    } catch (_) {}
+  }
+  const { canceled, filePath } = await dialog.showSaveDialog(settingsWindow || null, {
+    title: "Export presets",
+    defaultPath: "shard-presets.json",
+    filters: [{ name: "JSON", extensions: ["json"] }],
+  });
+  if (canceled || !filePath) return { success: false, canceled: true };
+  await fs.writeFile(filePath, content, "utf8");
+  return { success: true };
+});
+
+ipcMain.handle("import-presets", async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(settingsWindow || null, {
+    title: "Import presets",
+    filters: [{ name: "JSON", extensions: ["json"] }],
+    properties: ["openFile"],
+  });
+  if (canceled || !filePaths?.length) return { success: false, canceled: true };
+  try {
+    const content = await fs.readFile(filePaths[0], "utf8");
+    const data = JSON.parse(content);
+    if (typeof data !== "object" || data === null) throw new Error("Invalid presets JSON");
+    const presetsPath = configStore.get(PRESETS_PATH_KEY) || getDefaultPresetsPath();
+    await fs.mkdir(path.dirname(presetsPath), { recursive: true });
+    await fs.writeFile(presetsPath, JSON.stringify(data, null, 2), "utf8");
+    return { success: true, presets: data };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+// Window / keybind settings
+ipcMain.handle("get-keybind", async () => configStore.get(KEYBIND_KEY) || DEFAULT_KEYBIND);
+ipcMain.handle("set-keybind", async (_e, accel) => {
+  if (typeof accel !== "string" || !accel.trim()) return { success: false, error: "Invalid keybind" };
+  configStore.set(KEYBIND_KEY, accel.trim());
+  registerKeybind();
+  return { success: true };
+});
+
+ipcMain.handle("get-window-size", async () => getWindowSizePreset());
+ipcMain.handle("set-window-size", async (_e, size) => {
+  if (!SIZE_PRESETS[size]) return { success: false };
+  configStore.set(WINDOW_SIZE_KEY, size);
+  return { success: true };
+});
+
+ipcMain.handle("get-window-position", async () => getWindowPositionPreset());
+ipcMain.handle("set-window-position", async (_e, position) => {
+  if (!POSITION_OPTIONS.includes(position)) return { success: false };
+  configStore.set(WINDOW_POSITION_KEY, position);
+  return { success: true };
+});
+
+ipcMain.handle("get-size-presets", async () => SIZE_LABELS);
+ipcMain.handle("get-position-options", async () => [...POSITION_OPTIONS]);
+
+ipcMain.handle("close-window", async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win && !win.isDestroyed()) win.close();
+});
+
 // Existing IPC Handlers
 ipcMain.handle("send-message", async (event, message) => {
   // Hide the chat window
@@ -603,8 +755,7 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
 
-  // Register global shortcut Ctrl+Alt+I to show/hide window
-  globalShortcut.register("CommandOrControl+Alt+I", toggleWindow);
+  registerKeybind();
 
   // Handle deep link URL passed on initial launch (Windows/Linux)
   // This happens when the app wasn't running and user clicks the protocol link

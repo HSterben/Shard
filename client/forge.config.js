@@ -1,9 +1,12 @@
 const { FusesPlugin } = require('@electron-forge/plugin-fuses');
 const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 
+const path = require('path');
+
 module.exports = {
   packagerConfig: {
     asar: true,
+    extraResource: [path.join(__dirname, 'shard-presets.json')],
   },
   rebuildConfig: {},
   makers: [
@@ -50,6 +53,10 @@ module.exports = {
           },
           {
             name: 'message_window',
+            config: 'vite.renderer.config.mjs',
+          },
+          {
+            name: 'settings_window',
             config: 'vite.renderer.config.mjs',
           },
         ],
