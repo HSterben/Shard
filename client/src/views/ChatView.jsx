@@ -76,11 +76,15 @@ const ChatView = () => {
     };
     const rawFirst = (message || '').trim().split(/\s+/)[0] || '';
     const firstWord = rawFirst.replace(/\W/g, ''); // strip punctuation so "Simplify," matches "Simplify"
-    if (!firstWord || !presetsMap || Object.keys(presetsMap).length === 0) return base;
+    if (!firstWord || !presetsMap || Object.keys(presetsMap).length === 0) {
+      return { options: base, presetMatched: false };
+    }
     const key = Object.keys(presetsMap).find(
       (k) => k.toLowerCase() === firstWord.toLowerCase()
     );
-    if (!key) return base;
+    if (!key) {
+      return { options: base, presetMatched: false };
+    }
     const p = presetsMap[key];
     const systemInstructionRaw = p.systemInstruction ?? p.system_instruction;
     const systemInstruction =
@@ -88,14 +92,17 @@ const ChatView = () => {
         ? String(systemInstructionRaw).trim()
         : DEFAULT_SYSTEM_INSTRUCTION;
     return {
-      ...base,
-      systemInstruction,
-      temperature: p.temperature != null ? p.temperature : 0.7,
-      maxTokens: p.maxTokens != null ? p.maxTokens : 1024,
-      topP: p.topP != null ? p.topP : 0.95,
-      frequencyPenalty: p.frequencyPenalty != null ? p.frequencyPenalty : 0.0,
-      presencePenalty: p.presencePenalty != null ? p.presencePenalty : 0.3,
-      stop: p.stop != null ? p.stop : undefined,
+      options: {
+        ...base,
+        systemInstruction,
+        temperature: p.temperature != null ? p.temperature : 0.7,
+        maxTokens: p.maxTokens != null ? p.maxTokens : 1024,
+        topP: p.topP != null ? p.topP : 0.95,
+        frequencyPenalty: p.frequencyPenalty != null ? p.frequencyPenalty : 0.0,
+        presencePenalty: p.presencePenalty != null ? p.presencePenalty : 0.3,
+        stop: p.stop != null ? p.stop : undefined,
+      },
+      presetMatched: true,
     };
   };
 
@@ -480,6 +487,7 @@ const ChatView = () => {
 
     try {
       let fullContent = '';
+      let messageToSend = userMessage;
       if (sessionOptionsRef.current === null) {
         let presetsToUse = presets;
         if (Object.keys(presetsToUse).length === 0 && window.electronAPI?.readPresets) {
@@ -489,11 +497,19 @@ const ChatView = () => {
             setPresets(result.presets);
           }
         }
-        sessionOptionsRef.current = getOptionsForMessage(userMessage, presetsToUse);
+        const result = getOptionsForMessage(userMessage, presetsToUse);
+        // If a preset was matched, remove the first word from the first message only
+        if (result.presetMatched) {
+          const trimmedMessage = (userMessage || '').trim();
+          const words = trimmedMessage.split(/\s+/);
+          messageToSend = words.slice(1).join(' ').trim();
+        }
+        // Store options and reset presetMatched to false so it doesn't affect subsequent messages
+        sessionOptionsRef.current = { ...result, presetMatched: false };
       }
-      const options = sessionOptionsRef.current;
+      const options = sessionOptionsRef.current.options || sessionOptionsRef.current;
       const response = await askOpenRouterStream(
-        userMessage,
+        messageToSend,
         files,
         DEFAULT_MODEL,
         options,
@@ -534,7 +550,7 @@ const ChatView = () => {
         conversationContext.current = [
           ...conversationContext.current,
           { 
-            text: userMessage, 
+            text: messageToSend, 
             sender: 'user',
             images: files.length > 0 ? files.map(f => f.dataUrl) : undefined
           },

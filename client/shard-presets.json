@@ -6,6 +6,13 @@
     "frequencyPenalty": 0,
     "presencePenalty": 0
   },
+  "Shortly": {
+    "description": "Give a short, simple analogy or explanation (2-4 sentences max) that helps someone quickly understand something.",
+    "systemInstruction": "Briefly and simply explain the concept using a simple analogy or everyday comparison. Make your answer no longer than 4 sentences. Focus on making the main idea easy to grasp in a practical way.",
+    "temperature": 0.35,
+    "frequencyPenalty": 0,
+    "presencePenalty": 0
+  },
   "Explain": {
     "description": "Explain the following in detail, as if to a beginner. Add context and examples where helpful.",
     "systemInstruction": "You are a patient teacher. Explain concepts clearly and in detail. Use examples and step-by-step reasoning. Assume the reader may be new to the topic.",
