@@ -7,7 +7,7 @@ import { api } from '../../../backend/convex/_generated/api';
 import './ChatView.css';
 
 // ——— Constants ———
-const CONVEX_URL = 'https://elegant-greyhound-73.convex.cloud';
+const CONVEX_URL = 'https://strong-poodle-712.convex.cloud';
 const DEFAULT_SYSTEM_INSTRUCTION =
   'You are Shard, an expert AI assistant. Be concise and helpful. Always provide clear, accurate information and assist the user to the best of your ability.'
 const DEFAULT_MODEL = 'nvidia/nemotron-nano-12b-v2-vl:free';

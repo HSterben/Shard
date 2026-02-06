@@ -6,13 +6,21 @@ const path = require('path');
 module.exports = {
   packagerConfig: {
     asar: true,
+    name: 'Shard',
+    executableName: 'Shard',
     extraResource: [path.join(__dirname, 'shard-presets.json')],
   },
   rebuildConfig: {},
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
-      config: {},
+      config: {
+        name: 'Shard',
+      },
+    },
+    {
+      name: '@electron-forge/maker-zip',
+      platforms: ['win32'],
     },
     {
       name: '@electron-forge/maker-zip',

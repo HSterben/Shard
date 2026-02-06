@@ -1,13 +1,15 @@
 {
-  "name": "electron",
-  "productName": "electron",
+  "name": "shard",
+  "productName": "Shard",
   "version": "1.0.0",
-  "description": "My Electron application description",
+  "description": "Shard - AI chat assistant",
   "main": ".vite/build/main.js",
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",
+    "make:win": "electron-forge make --platform win32",
+    "make:mac": "electron-forge make --platform darwin",
     "publish": "electron-forge publish",
     "lint": "echo \"No linting configured\""
   },

@@ -115,8 +115,8 @@ async function verifyStripeWebhookSignature(rawBody: string, signatureHeader: st
 // WorkOS AuthKit OAuth configuration
 // WORKOS_CLIENT_ID is public (safe to hardcode)
 // WORKOS_API_KEY must be set as a Convex environment variable (it's secret!)
-const WORKOS_CLIENT_ID = 'client_01KE1PA9FBR4R8JMP8507FE0SV';
-const WORKOS_REDIRECT_URI = 'https://elegant-greyhound-73.convex.site/auth/callback';
+const WORKOS_CLIENT_ID = 'client_01KGNG7JGSBPA9HZWGVKZ8N8MS';
+const WORKOS_REDIRECT_URI = 'https://strong-poodle-712.convex.site/auth/callback';
 
 // Start OAuth flow - redirects to WorkOS
 http.route({

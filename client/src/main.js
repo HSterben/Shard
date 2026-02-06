@@ -72,7 +72,7 @@ const DEFAULT_PRESETS = {
 
 // Auth configuration
 // Note: .convex.cloud is for queries/mutations, .convex.site is for HTTP endpoints
-const CONVEX_HTTP_URL = "https://elegant-greyhound-73.convex.site";
+const CONVEX_HTTP_URL = "https://strong-poodle-712.convex.site";
 const AUTH_LOGIN_URL = `${CONVEX_HTTP_URL}/auth/login`;
 const AUTH_REFRESH_URL = `${CONVEX_HTTP_URL}/auth/refresh`;
 

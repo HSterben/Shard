@@ -1,6 +1,6 @@
 import { AuthConfig } from 'convex/server';
 
-const clientId = 'client_01KE1PA9FBR4R8JMP8507FE0SV';
+const clientId = 'client_01KGNG7JGSBPA9HZWGVKZ8N8MS';
 
 export default {
   providers: [

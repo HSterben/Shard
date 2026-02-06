@@ -1,0 +1,195 @@
+/* Shard landing theme - matches client ChatView */
+.landing-theme {
+  --color-bg-primary: #000000;
+  --color-bg-secondary: #0a0a0a;
+  --color-bg-elevated: #111111;
+  --color-accent-primary: #00d4ff;
+  --color-accent-secondary: #0099cc;
+  --color-accent-hover: #00e6ff;
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #666666;
+  --color-border: #1a1a1a;
+  --color-border-accent: rgba(0, 212, 255, 0.2);
+  --color-shadow: rgba(0, 0, 0, 0.5);
+  --color-glow: rgba(0, 212, 255, 0.15);
+}
+
+.landing-theme,
+.landing-theme * {
+  box-sizing: border-box;
+}
+
+.landing-theme {
+  min-height: 100vh;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+.landing-nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.landing-nav-logo {
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: 0.02em;
+  color: var(--color-text-primary);
+}
+
+.landing-nav-logo span {
+  color: var(--color-accent-primary);
+}
+
+.landing-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.landing-nav-links a {
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  font-size: 0.9rem;
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  transition: color 0.2s, background 0.2s;
+}
+
+.landing-nav-links a:hover {
+  color: var(--color-accent-hover);
+  background: var(--color-glow);
+}
+
+.landing-hero {
+  padding: 4rem 1.5rem 3rem;
+  text-align: center;
+  max-width: 42rem;
+  margin: 0 auto;
+}
+
+.landing-hero h1 {
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: 700;
+  line-height: 1.15;
+  margin: 0 0 1rem;
+  letter-spacing: -0.02em;
+}
+
+.landing-hero h1 .accent {
+  color: var(--color-accent-primary);
+  display: inline-block;
+}
+
+.landing-hero p {
+  color: var(--color-text-secondary);
+  font-size: 1.125rem;
+  line-height: 1.6;
+  margin: 0 0 2rem;
+}
+
+.landing-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.875rem 1.75rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-bg-primary);
+  background: var(--color-accent-primary);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.2s, box-shadow 0.2s;
+  box-shadow: 0 0 20px var(--color-glow);
+}
+
+.landing-cta:hover {
+  background: var(--color-accent-hover);
+  box-shadow: 0 0 28px rgba(0, 230, 255, 0.25);
+}
+
+.landing-cta:disabled,
+.landing-cta.landing-cta-placeholder {
+  opacity: 0.7;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.landing-cta.landing-cta-placeholder:hover {
+  background: var(--color-accent-primary);
+}
+
+.landing-features {
+  padding: 3rem 1.5rem 4rem;
+  max-width: 56rem;
+  margin: 0 auto;
+}
+
+.landing-features h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0 0 2rem;
+  text-align: center;
+  color: var(--color-text-primary);
+}
+
+.landing-features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1.5rem;
+}
+
+.landing-feature-card {
+  padding: 1.5rem;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.landing-feature-card:hover {
+  border-color: var(--color-border-accent);
+  box-shadow: 0 0 24px var(--color-glow);
+}
+
+.landing-feature-card h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+  color: var(--color-accent-primary);
+}
+
+.landing-feature-card p {
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.landing-footer {
+  padding: 2rem 1.5rem;
+  text-align: center;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+}
+
+.landing-footer a {
+  color: var(--color-accent-primary);
+  text-decoration: none;
+}
+
+.landing-footer a:hover {
+  color: var(--color-accent-hover);
+  text-decoration: underline;
+}
