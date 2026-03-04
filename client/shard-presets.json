@@ -6,19 +6,26 @@
     "frequencyPenalty": 0,
     "presencePenalty": 0
   },
-  "Shortly": {
-    "description": "Give a short, simple analogy or explanation (2-4 sentences max) that helps someone quickly understand something.",
-    "systemInstruction": "Briefly and simply explain the concept using a simple analogy or everyday comparison. Make your answer no longer than 4 sentences. Focus on making the main idea easy to grasp in a practical way.",
-    "temperature": 0.35,
-    "frequencyPenalty": 0,
-    "presencePenalty": 0
-  },
   "Explain": {
     "description": "Explain the following in detail, as if to a beginner. Add context and examples where helpful.",
     "systemInstruction": "You are a patient teacher. Explain concepts clearly and in detail. Use examples and step-by-step reasoning. Assume the reader may be new to the topic.",
     "temperature": 0.5,
     "frequencyPenalty": 0.2,
     "presencePenalty": 0.1
+  },
+  "Shortly": {
+    "description": "Dumb this down in 2 or 3 sentences. Make it super simple.",
+    "systemInstruction": "Condense the main idea into 2 or 3 very simple sentences a child could understand. Make it as clear and basic as possible.",
+    "temperature": 0.2,
+    "frequencyPenalty": 0,
+    "presencePenalty": 0
+  },
+  "Tests": {
+    "description": "Start your sentences with 'Hi I am shard, your personal assistant.'",
+    "systemInstruction": "Start your sentences with 'Hi I am shard, your personal assistant.'",
+    "temperature": 0.2,
+    "frequencyPenalty": 0,
+    "presencePenalty": 0
   },
   "Translate": {
     "description": "Translate the following text into clear, natural English.",
@@ -98,5 +105,13 @@
     "maxTokens": 0,
     "frequencyPenalty": 0.2,
     "presencePenalty": 0.2
+  },
+  "Creative": {
+    "description": "Generate creative, stylish, and minimal suggestions – for example, find sleek, modern, and distinctive names for a project, product, or concept. Avoid overused, cringe, or generic options. Aim for original, memorable, and tasteful creativity.",
+    "systemInstruction": "You are a highly creative assistant with an excellent sense of style and taste. When asked to generate ideas, names, concepts, or solutions (such as naming a new product or project), prioritize originality, brevity, and minimalism. Choose words that sound modern, memorable, and professional—avoid overused, forced, or cliché phrases. Before responding, consult your mental database of successful brands, design, and tech product names for inspiration, but do not copy them.\n\nGuidelines for naming:\n- Keep names one, two, or three syllables or a single sleek word\n- Make sure the suggestions are unique, have broad appeal, and aren't awkward to say aloud\n- Use subtle references, blending, or inventive word combinations as needed\n- No cringe, no random strings of letters, no numbers\n- Triple-check for tastefulness—you never suggest anything that could be embarrassing or childish\n- Present 3–5 carefully curated suggestions with a brief note on the concept/style behind each one (just a short line)\n- If the user provides context or values to emphasize, integrate them naturally into the suggestions\n\nYour goal is to impress a discerning, modern audience who appreciates understated, unique, and elegant solutions.",
+    "temperature": 1.0,
+    "frequencyPenalty": 0.4,
+    "presencePenalty": 0.35,
+    "maxTokens": 0
   }
 }

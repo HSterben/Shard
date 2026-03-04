@@ -174,3 +174,31 @@ export const updateByStripeSubscriptionId = mutation({
     return existing._id;
   },
 });
+
+// Update subscription by Stripe customer id (e.g. when subscription was created in Dashboard and no row had subscription id yet)
+export const updateByStripeCustomerId = mutation({
+  args: {
+    stripeCustomerId: v.string(),
+    stripeSubscriptionId: v.string(),
+    status: v.string(),
+    currentPeriodEnd: v.optional(v.number()),
+    priceId: v.optional(v.string()),
+  },
+  returns: v.union(v.id('subscriptions'), v.null()),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query('subscriptions')
+      .withIndex('by_stripe_customer_id', (q) => q.eq('stripeCustomerId', args.stripeCustomerId))
+      .first();
+    if (!existing) return null;
+    const now = Date.now();
+    await ctx.db.patch(existing._id, {
+      stripeSubscriptionId: args.stripeSubscriptionId,
+      status: args.status,
+      currentPeriodEnd: args.currentPeriodEnd,
+      priceId: args.priceId,
+      updatedAt: now,
+    });
+    return existing._id;
+  },
+});

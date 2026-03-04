@@ -49,6 +49,14 @@ function getDefaultPresetsPath() {
   return path.join(app.getPath("userData"), "shard-presets.json");
 }
 
+// Icon path: dev = app path/src/icon; packaged = resources/icon (from extraResource)
+function getIconPath(filename) {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "icon", filename);
+  }
+  return path.join(app.getAppPath(), "src", "icon", filename);
+}
+
 function getPresetsPathsToTry() {
   const custom = configStore.get(PRESETS_PATH_KEY);
   if (custom) return [custom];
@@ -302,6 +310,7 @@ const createWindow = () => {
   const { width, height } = calculateWindowSize(workArea.width);
   const { x, y } = getWindowPositionXY(workArea, width, height);
 
+  const windowIcon = getIconPath(process.platform === "win32" ? "crystal.ico" : "crystal.png");
   mainWindow = new BrowserWindow({
     width,
     height,
@@ -310,6 +319,7 @@ const createWindow = () => {
     transparent: true,
     resizable: false,
     alwaysOnTop: true,
+    icon: windowIcon,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
     },
@@ -381,21 +391,14 @@ const toggleWindow = () => {
 };
 
 const createTray = () => {
-  // Create a simple tray icon (using native icon as fallback)
-  const iconPath = path.join(__dirname, "../assets/icon.png");
+  const iconPath = getIconPath("crystal.png");
   let icon;
-
   try {
     icon = nativeImage.createFromPath(iconPath);
-    if (icon.isEmpty()) {
-      // If icon doesn't exist or is empty, create a simple native icon
-      icon = nativeImage.createEmpty();
-    }
-  } catch (error) {
-    // If icon file doesn't exist, create an empty icon
+    if (icon.isEmpty()) icon = nativeImage.createEmpty();
+  } catch {
     icon = nativeImage.createEmpty();
   }
-
   tray = new Tray(icon);
 
   const contextMenu = Menu.buildFromTemplate([
@@ -460,6 +463,7 @@ function createSettingsWindow() {
     settingsWindow.focus();
     return;
   }
+  const windowIcon = getIconPath(process.platform === "win32" ? "crystal.ico" : "crystal.png");
   settingsWindow = new BrowserWindow({
     width: 480,
     height: 560,
@@ -467,6 +471,7 @@ function createSettingsWindow() {
     frame: false,
     title: "Shard Settings",
     backgroundColor: "#000000",
+    icon: windowIcon,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
     },
@@ -666,6 +671,21 @@ ipcMain.handle("set-window-position", async (_e, position) => {
 ipcMain.handle("get-size-presets", async () => SIZE_LABELS);
 ipcMain.handle("get-position-options", async () => [...POSITION_OPTIONS]);
 
+// Run on startup (Windows: startup folder / registry, macOS: Login Items; Linux: may not be supported)
+ipcMain.handle("get-run-on-startup", async () => {
+  const settings = app.getLoginItemSettings();
+  return settings.openAtLogin === true;
+});
+ipcMain.handle("set-run-on-startup", async (_e, enabled) => {
+  try {
+    app.setLoginItemSettings({ openAtLogin: Boolean(enabled) });
+    return { success: true };
+  } catch (err) {
+    console.error("Set run on startup failed:", err);
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle("close-window", async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win && !win.isDestroyed()) win.close();
@@ -686,6 +706,7 @@ ipcMain.handle("send-message", async (event, message) => {
   const { width: screenWidth, height: screenHeight } =
     primaryDisplay.workAreaSize;
 
+  const windowIcon = getIconPath(process.platform === "win32" ? "crystal.ico" : "crystal.png");
   const messageWindow = new BrowserWindow({
     width: screenWidth / 2,
     height: screenHeight * 0.6,
@@ -695,7 +716,8 @@ ipcMain.handle("send-message", async (event, message) => {
     resizable: true,
     alwaysOnTop: false,
     skipTaskbar: false,
-    show: false, // Don't show until ready
+    show: false,
+    icon: windowIcon,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       nodeIntegration: false,

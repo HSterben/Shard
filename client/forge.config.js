@@ -8,7 +8,11 @@ module.exports = {
     asar: true,
     name: 'Shard',
     executableName: 'Shard',
-    extraResource: [path.join(__dirname, 'shard-presets.json')],
+    icon: path.join(__dirname, 'src', 'icon', 'crystal'), // .ico on Windows, .icns on macOS
+    extraResource: [
+      path.join(__dirname, 'shard-presets.json'),
+      path.join(__dirname, 'src', 'icon'),
+    ],
   },
   rebuildConfig: {},
   makers: [
@@ -16,7 +20,12 @@ module.exports = {
       name: '@electron-forge/maker-squirrel',
       config: {
         name: 'Shard',
+        ...(process.env.CERT_FILE && {
+          certificateFile: process.env.CERT_FILE,
+          certificatePassword: process.env.CERT_PASSWORD,
+        }),
       },
+      platforms: ['win32'], // Windows only; avoids running on Mac where it can hang
     },
     {
       name: '@electron-forge/maker-zip',
@@ -29,10 +38,12 @@ module.exports = {
     {
       name: '@electron-forge/maker-deb',
       config: {},
+      platforms: ['linux'],
     },
     {
       name: '@electron-forge/maker-rpm',
       config: {},
+      platforms: ['linux'],
     },
   ],
   plugins: [

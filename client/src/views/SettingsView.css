@@ -18,7 +18,16 @@
   justify-content: space-between;
   padding: 0 12px;
   flex-shrink: 0;
+  gap: 8px;
   -webkit-app-region: drag;
+}
+
+.settings-title-icon {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
 }
 
 .settings-title-text {
@@ -117,6 +126,26 @@
   padding: 0 4px;
   background: var(--color-bg-elevated, #111);
   border-radius: 4px;
+}
+
+.settings-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-checkbox-row span {
+  font-size: 14px;
+  color: var(--color-text-primary, #fff);
+}
+
+.settings-checkbox {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-accent-primary, #00d4ff);
+  cursor: pointer;
 }
 
 .settings-keybind-row {

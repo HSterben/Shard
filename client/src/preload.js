@@ -42,5 +42,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSizePresets: () => ipcRenderer.invoke('get-size-presets'),
   getPositionOptions: () => ipcRenderer.invoke('get-position-options'),
 
+  getRunOnStartup: () => ipcRenderer.invoke('get-run-on-startup'),
+  setRunOnStartup: (enabled) => ipcRenderer.invoke('set-run-on-startup', enabled),
+
   closeWindow: () => ipcRenderer.invoke('close-window'),
 });

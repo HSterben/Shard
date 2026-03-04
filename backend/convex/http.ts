@@ -25,16 +25,17 @@ function jsonResponse(body: unknown, status = 200, extraHeaders: Record<string, 
   });
 }
 
-async function stripeApiRequest(path: string, form: URLSearchParams) {
-  const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
-  if (!STRIPE_SECRET_KEY) {
-    throw new Error('STRIPE_SECRET_KEY is not configured');
-  }
+const STRIPE_SECRET_KEY = () => {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error('STRIPE_SECRET_KEY is not configured');
+  return key;
+};
 
+async function stripeApiRequest(path: string, form: URLSearchParams) {
   const resp = await fetch(`https://api.stripe.com/v1${path}`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${STRIPE_SECRET_KEY}`,
+      Authorization: `Bearer ${STRIPE_SECRET_KEY()}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: form.toString(),
@@ -46,6 +47,20 @@ async function stripeApiRequest(path: string, form: URLSearchParams) {
     throw new Error(message);
   }
   return data as any;
+}
+
+/** GET a Stripe object (e.g. customer) to get email when subscription has no metadata */
+async function stripeApiGet(path: string): Promise<any> {
+  const resp = await fetch(`https://api.stripe.com/v1${path}`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${STRIPE_SECRET_KEY()}` },
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const message = (data as any)?.error?.message || `Stripe API error: ${resp.status}`;
+    throw new Error(message);
+  }
+  return data;
 }
 
 function hexFromBuffer(buffer: ArrayBuffer) {
@@ -659,8 +674,18 @@ http.route({
           const reader = response.body?.getReader();
           const decoder = new TextDecoder();
           let buffer = ''; // Buffer for incomplete lines
+          // Keepalive: send a comment every 4s so proxies/idle timeouts don't kill the stream before first token
+          const keepaliveMs = 4000;
+          const keepaliveId = setInterval(() => {
+            try {
+              controller.enqueue(new TextEncoder().encode(': keepalive\n\n'));
+            } catch {
+              // controller may be closed
+            }
+          }, keepaliveMs);
 
           if (!reader) {
+            clearInterval(keepaliveId);
             controller.close();
             return;
           }
@@ -670,6 +695,7 @@ http.route({
               const { done, value } = await reader.read();
               
               if (done) {
+                clearInterval(keepaliveId);
                 // Process any remaining buffered data
                 if (buffer.trim()) {
                   const lines = buffer.split('\n');
@@ -678,6 +704,7 @@ http.route({
                 if (line.startsWith('data: ')) {
                   const data = line.slice(6).trim();
                   if (data === '[DONE]') {
+                    clearInterval(keepaliveId);
                     controller.close();
                     return;
                   }
@@ -694,6 +721,7 @@ http.route({
                 }
               }
                 }
+                clearInterval(keepaliveId);
                 controller.close();
                 break;
               }
@@ -712,6 +740,7 @@ http.route({
                 if (line.startsWith('data: ')) {
                   const data = line.slice(6).trim();
                   if (data === '[DONE]') {
+                    clearInterval(keepaliveId);
                     controller.close();
                     return;
                   }
@@ -729,6 +758,7 @@ http.route({
               }
             }
           } catch (error) {
+            clearInterval(keepaliveId);
             console.error('Stream processing error:', error);
             // Send error as SSE event before closing
             try {
@@ -761,6 +791,112 @@ http.route({
             'Access-Control-Allow-Origin': '*',
           } 
         }
+      );
+    }
+  }),
+});
+
+// Non-streaming OpenRouter endpoint (fallback when stream times out; Convex action can run longer)
+http.route({
+  path: '/openrouter/complete',
+  method: 'OPTIONS',
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Max-Age': '86400',
+      },
+    });
+  }),
+});
+
+http.route({
+  path: '/openrouter/complete',
+  method: 'POST',
+  handler: httpAction(async (ctx, req) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return new Response(JSON.stringify({ error: 'Authentication required' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      });
+    }
+
+    try {
+      const body = await req.json();
+      const { messages, model, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stop } = body;
+      const systemInstruction = body.systemInstruction ?? body.system_instruction;
+
+      if (!model || !messages || messages.length === 0) {
+        return new Response(JSON.stringify({ error: 'Model and messages are required' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+        });
+      }
+
+      let processedMessages = [...messages];
+      if (systemInstruction) {
+        const hasSystem = processedMessages.some((m: any) => m.role === 'system');
+        if (!hasSystem) {
+          processedMessages = [{ role: 'system', content: systemInstruction }, ...processedMessages];
+        }
+      }
+
+      const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+      const OPENROUTER_HTTP_REFERER = process.env.OPENROUTER_HTTP_REFERER || '';
+      const OPENROUTER_X_TITLE = process.env.OPENROUTER_X_TITLE || 'Shard';
+      if (!OPENROUTER_API_KEY) {
+        return new Response(JSON.stringify({ error: 'OpenRouter API key not configured' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+        });
+      }
+
+      const payload: any = {
+        model,
+        messages: processedMessages,
+        stream: false,
+      };
+      if (temperature !== undefined) payload.temperature = temperature;
+      if (maxTokens !== undefined) payload.max_tokens = maxTokens;
+      if (topP !== undefined) payload.top_p = topP;
+      if (frequencyPenalty !== undefined) payload.frequency_penalty = frequencyPenalty;
+      if (presencePenalty !== undefined) payload.presence_penalty = presencePenalty;
+      if (stop !== undefined) payload.stop = stop;
+
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+          'HTTP-Referer': OPENROUTER_HTTP_REFERER,
+          'X-Title': OPENROUTER_X_TITLE,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        return new Response(
+          JSON.stringify({ error: (err as any).error?.message || 'OpenRouter API error' }),
+          { status: response.status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
+        );
+      }
+
+      const data = (await response.json()) as any;
+      const content = data?.choices?.[0]?.message?.content ?? '';
+      return new Response(JSON.stringify({ content: typeof content === 'string' ? content : JSON.stringify(content) }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      });
+    } catch (error) {
+      console.error('OpenRouter complete error:', error);
+      return new Response(
+        JSON.stringify({ error: error instanceof Error ? error.message : 'Internal server error' }),
+        { status: 500, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
       );
     }
   }),
@@ -1124,13 +1260,55 @@ http.route({
         }
         // Always update by subscription id so the row we created in checkout.session.completed gets status active
         if (sub?.id) {
-          await ctx.runMutation(api.subscriptions.updateByStripeSubscriptionId, {
+          const updated = await ctx.runMutation(api.subscriptions.updateByStripeSubscriptionId, {
             stripeSubscriptionId: sub.id,
             status,
             stripeCustomerId: sub?.customer || undefined,
             currentPeriodEnd,
             priceId,
           });
+          // If no row had this subscription id, try updating by customer id
+          if (updated === null && sub?.customer) {
+            const byCustomer = await ctx.runMutation(api.subscriptions.updateByStripeCustomerId, {
+              stripeCustomerId: sub.customer,
+              stripeSubscriptionId: sub.id,
+              status,
+              currentPeriodEnd,
+              priceId,
+            });
+            // If still no row (Convex row has no stripe ids set), fetch Stripe customer email and update the row the app uses (by workosId)
+            if (byCustomer === null) {
+              try {
+                const customer = await stripeApiGet(`/customers/${sub.customer}`);
+                const customerEmail = typeof customer?.email === 'string' ? customer.email : undefined;
+                if (customerEmail) {
+                  const user = await ctx.runQuery(api.users.getUserByEmail, { email: customerEmail });
+                  if (user?.workosId) {
+                    await ctx.runMutation(api.subscriptions.upsertByWorkosId, {
+                      workosId: user.workosId,
+                      email: customerEmail,
+                      status,
+                      stripeCustomerId: sub.customer,
+                      stripeSubscriptionId: sub.id,
+                      currentPeriodEnd,
+                      priceId,
+                    });
+                  } else {
+                    await ctx.runMutation(api.subscriptions.upsertByEmail, {
+                      email: customerEmail,
+                      status,
+                      stripeCustomerId: sub.customer,
+                      stripeSubscriptionId: sub.id,
+                      currentPeriodEnd,
+                      priceId,
+                    });
+                  }
+                }
+              } catch (e) {
+                console.error('Stripe webhook: could not fetch customer for email fallback', e);
+              }
+            }
+          }
         }
       }
 

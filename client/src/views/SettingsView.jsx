@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import "./SettingsView.css";
+import crystalIcon from "../icon/crystal.png";
 
 const api = typeof window !== "undefined" ? window.electronAPI : null;
 
@@ -69,22 +70,25 @@ export default function SettingsView() {
   const [windowSize, setWindowSize] = useState("Regular");
   const [windowPosition, setWindowPosition] = useState("bottom-right");
   const [presetsPath, setPresetsPath] = useState("");
+  const [runOnStartup, setRunOnStartup] = useState(false);
   const [message, setMessage] = useState(null);
   const keybindInputRef = useRef(null);
 
   const loadSettings = async () => {
     if (!api) return;
     try {
-      const [kb, size, pos, path] = await Promise.all([
+      const [kb, size, pos, path, startup] = await Promise.all([
         api.getKeybind(),
         api.getWindowSize(),
         api.getWindowPosition(),
         api.getPresetsPath(),
+        api.getRunOnStartup?.() ?? Promise.resolve(false),
       ]);
       setKeybind(kb || "");
       setWindowSize(size || "Regular");
       setWindowPosition(pos || "bottom-right");
       setPresetsPath(path || "");
+      setRunOnStartup(Boolean(startup));
     } catch (e) {
       console.error(e);
     }
@@ -153,6 +157,13 @@ export default function SettingsView() {
     } else showMessage("Failed to set default.", true);
   };
 
+  const handleRunOnStartupChange = async (e) => {
+    const enabled = e.target.checked;
+    setRunOnStartup(enabled);
+    const result = await api?.setRunOnStartup?.(enabled);
+    if (result && !result.success) showMessage(result.error || "Failed to update", true);
+  };
+
   const handleClose = () => api?.closeWindow?.();
 
   if (!api) {
@@ -166,6 +177,7 @@ export default function SettingsView() {
   return (
     <div className="settings-view">
       <div className="settings-title-bar">
+        <img src={crystalIcon} alt="" className="settings-title-icon" />
         <span className="settings-title-text">Settings</span>
         <button
           type="button"
@@ -184,6 +196,20 @@ export default function SettingsView() {
         {message && (
           <div className={`settings-message ${message.isError ? "error" : ""}`}>{message.text}</div>
         )}
+
+        <section className="settings-section">
+        <h2>Run on startup</h2>
+        <p className="settings-hint">Open Shard when you log in to your computer.</p>
+        <label className="settings-checkbox-row">
+          <input
+            type="checkbox"
+            checked={runOnStartup}
+            onChange={handleRunOnStartupChange}
+            className="settings-checkbox"
+          />
+          <span>Run Shard at system startup</span>
+        </label>
+      </section>
 
         <section className="settings-section">
         <h2>Global keybind</h2>

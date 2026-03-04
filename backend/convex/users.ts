@@ -66,6 +66,27 @@ export const deleteUser = mutation({
   },
 });
 
+// Query to get user by email (for webhook: Stripe customer email → workosId)
+export const getUserByEmail = query({
+  args: { email: v.string() },
+  returns: v.union(
+    v.object({
+      _id: v.id('users'),
+      workosId: v.string(),
+      email: v.optional(v.string()),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, args) => {
+    const user = await ctx.db
+      .query('users')
+      .withIndex('by_email', (q) => q.eq('email', args.email))
+      .first();
+    if (!user) return null;
+    return { _id: user._id, workosId: user.workosId, email: user.email };
+  },
+});
+
 // Query to get user by WorkOS ID
 export const getUserByWorkosId = query({
   args: {

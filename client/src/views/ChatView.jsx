@@ -5,21 +5,28 @@ import remarkGfm from 'remark-gfm';
 import { ConvexClient } from 'convex/browser';
 import { api } from '../../../backend/convex/_generated/api';
 import './ChatView.css';
+import crystalIcon from '../icon/crystal.png';
 
 // ——— Constants ———
 const CONVEX_URL = 'https://strong-poodle-712.convex.cloud';
+// Optional override: set VITE_CONVEX_SITE_URL in .env to your HTTP actions base (e.g. https://your-deployment.convex.site)
+const CONVEX_SITE_BASE = typeof import.meta !== 'undefined' && import.meta.env?.VITE_CONVEX_SITE_URL
+  ? import.meta.env.VITE_CONVEX_SITE_URL.replace(/\/$/, '')
+  : (() => {
+      const base = CONVEX_URL.replace('https://', '').replace('.convex.cloud', '');
+      return `https://${base}.convex.site`;
+    })();
+
+const getConvexSiteBaseUrl = () => CONVEX_SITE_BASE;
+
 const DEFAULT_SYSTEM_INSTRUCTION =
   'You are Shard, an expert AI assistant. Be concise and helpful. Always provide clear, accurate information and assist the user to the best of your ability.'
 const DEFAULT_MODEL = 'nvidia/nemotron-nano-12b-v2-vl:free';
 
-const getConvexSiteBaseUrl = () => {
-  const base = CONVEX_URL.replace('https://', '').replace('.convex.cloud', '');
-  return `https://${base}.convex.site`;
-};
-
 // ——— Title bar (shared) ———
 const TitleBar = ({ onClose }) => (
   <div className="chat-title-bar">
+    <img src={crystalIcon} alt="" className="chat-title-icon" />
     <span className="chat-title-text">Shard</span>
     <button className="chat-close-button" onClick={onClose} aria-label="Close chat">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -68,7 +75,7 @@ const ChatView = () => {
     const base = {
       systemInstruction: DEFAULT_SYSTEM_INSTRUCTION,
       temperature: 0.5,
-      maxTokens: 1024,
+      maxTokens: 4096,
       topP: 0.95,
       frequencyPenalty: 0.0,
       presencePenalty: 0.3,
@@ -96,7 +103,7 @@ const ChatView = () => {
         ...base,
         systemInstruction,
         temperature: p.temperature != null ? p.temperature : 0.7,
-        maxTokens: p.maxTokens != null ? p.maxTokens : 1024,
+        maxTokens: p.maxTokens != null ? p.maxTokens : 4096,
         topP: p.topP != null ? p.topP : 0.95,
         frequencyPenalty: p.frequencyPenalty != null ? p.frequencyPenalty : 0.0,
         presencePenalty: p.presencePenalty != null ? p.presencePenalty : 0.3,
@@ -456,6 +463,59 @@ const ChatView = () => {
     }
   };
 
+  const askOpenRouterComplete = async (message, files, model, options, isRetry = false) => {
+    const contextMessages = buildContextMessages(message, files);
+    if (!authToken) throw new Error('Authentication token not available. Please log in.');
+    const url = `${getConvexSiteBaseUrl()}/openrouter/complete`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000); // 90s for slow free models
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          messages: contextMessages,
+          model,
+          systemInstruction: options.systemInstruction ?? DEFAULT_SYSTEM_INSTRUCTION,
+          temperature: options.temperature,
+          maxTokens: options.maxTokens,
+          topP: options.topP,
+          frequencyPenalty: options.frequencyPenalty,
+          presencePenalty: options.presencePenalty,
+          stop: options.stop,
+        }),
+      });
+    } catch (e) {
+      clearTimeout(timeoutId);
+      if (e?.name === 'AbortError') {
+        throw new Error('Request timed out. The AI is taking too long; try a shorter question or try again.');
+      }
+      const msg = e?.message || String(e);
+      if (msg === 'Failed to fetch' || msg.includes('fetch')) {
+        throw new Error(
+          `Could not reach the server (tried ${url}). Check your internet connection and deploy the Convex backend: run "npx convex deploy" from the backend folder.`
+        );
+      }
+      throw e;
+    }
+    clearTimeout(timeoutId);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      if (!isRetry && (res.status === 401 || (err.error && err.error.includes('Authentication')))) {
+        const refreshed = await refreshAndRetry();
+        if (refreshed) return askOpenRouterComplete(message, files, model, options, true);
+      }
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return { content: data.content ?? '' };
+  };
+
   const getAIResponse = async (userMessage, files = []) => {
     // Enforce subscription before calling the AI
     try {
@@ -486,7 +546,6 @@ const ChatView = () => {
     setMessages(prev => [...prev, aiMessage]);
 
     try {
-      let fullContent = '';
       let messageToSend = userMessage;
       if (sessionOptionsRef.current === null) {
         let presetsToUse = presets;
@@ -498,51 +557,55 @@ const ChatView = () => {
           }
         }
         const result = getOptionsForMessage(userMessage, presetsToUse);
-        // If a preset was matched, remove the first word from the first message only
         if (result.presetMatched) {
           const trimmedMessage = (userMessage || '').trim();
           const words = trimmedMessage.split(/\s+/);
           messageToSend = words.slice(1).join(' ').trim();
         }
-        // Store options and reset presetMatched to false so it doesn't affect subsequent messages
         sessionOptionsRef.current = { ...result, presetMatched: false };
       }
       const options = sessionOptionsRef.current.options || sessionOptionsRef.current;
-      const response = await askOpenRouterStream(
-        messageToSend,
-        files,
-        DEFAULT_MODEL,
-        options,
-        (chunk) => {
-          // Update message as chunks arrive
-          fullContent += chunk;
-          setMessages(prev => prev.map(msg => 
-            msg.id === aiMessageId 
-              ? { ...msg, text: fullContent }
-              : msg
-          ));
-        }
-      );
 
-      // Finalize the message
-      const finalContent = response.content || fullContent;
-      
-      // Check if we got any content
-      if (!finalContent || finalContent.trim() === '') {
-        // Remove the empty message and show error
-        setMessages(prev => prev.filter(msg => msg.id !== aiMessageId));
+      setMessages(prev => prev.map(msg =>
+        msg.id === aiMessageId ? { ...msg, text: '' } : msg
+      ));
+
+      let contentToUse = '';
+      let requestError = null;
+      const tryComplete = async () => {
+        const complete = await askOpenRouterComplete(messageToSend, files, DEFAULT_MODEL, options);
+        return (complete.content || '').trim();
+      };
+      try {
+        contentToUse = await tryComplete();
+        if (!contentToUse) {
+          setMessages(prev => prev.map(msg =>
+            msg.id === aiMessageId ? { ...msg, text: 'Retrying…' } : msg
+          ));
+          await new Promise((r) => setTimeout(r, 2000));
+          contentToUse = await tryComplete();
+        }
+      } catch (e) {
+        requestError = e;
+        console.error('AI request failed:', e);
+      }
+
+      if (!contentToUse) {
+        const errText = requestError instanceof Error ? requestError.message : (requestError ? String(requestError) : '');
         const errorMessage = {
           id: Date.now() + 1,
-          text: 'Error: Received empty response from the AI. Please try again.',
+          text: errText
+            ? `Error: ${errText}`
+            : 'Error: The AI returned no text. Free models can be slow or hit rate limits—wait a minute and try again, or try a shorter question.',
           sender: 'ai',
           timestamp: new Date()
         };
-        setMessages(prev => [...prev, errorMessage]);
+        setMessages(prev => [...prev.filter(msg => msg.id !== aiMessageId), errorMessage]);
       } else {
         // Update with final content
-        setMessages(prev => prev.map(msg => 
-          msg.id === aiMessageId 
-            ? { ...msg, text: finalContent.trim(), isStreaming: false }
+        setMessages(prev => prev.map(msg =>
+          msg.id === aiMessageId
+            ? { ...msg, text: contentToUse, isStreaming: false }
             : msg
         ));
         
@@ -554,7 +617,7 @@ const ChatView = () => {
             sender: 'user',
             images: files.length > 0 ? files.map(f => f.dataUrl) : undefined
           },
-          { text: finalContent.trim(), sender: 'ai' }
+          { text: contentToUse, sender: 'ai' }
         ];
       }
     } catch (error) {

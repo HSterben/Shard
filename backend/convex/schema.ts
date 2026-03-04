@@ -14,7 +14,9 @@ export default defineSchema({
     profilePictureUrl: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index('by_workos_id', ['workosId']),
+  })
+    .index('by_workos_id', ['workosId'])
+    .index('by_email', ['email']),
 
   subscriptions: defineTable({
     // Preferred key: WorkOS user id (injective mapping)

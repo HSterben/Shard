@@ -31,9 +31,9 @@ Installers and zips are under `out/` and `out/make/`.
 3. **Version** – Bump `version` in `package.json` for each release.
 4. **Icon (optional)** – Add `assets/icon.png` for the tray and `assets/icon.ico` for the EXE (see `assets/README.md`). To ship the tray icon with the EXE, add `path.join(__dirname, 'assets')` to `packagerConfig.extraResource` in `forge.config.js` and in `main.js` use `app.isPackaged ? path.join(process.resourcesPath, 'assets', 'icon.png') : path.join(__dirname, '../assets/icon.png')` for the tray icon path.
 
-## Code signing (recommended for distribution)
+## Code signing (removes "This app could be suspicious" / SmartScreen)
 
-Unsigned Windows EXEs may trigger SmartScreen. To sign the installer and EXE:
+Unsigned Windows EXEs trigger the "This app could be suspicious" / "Run anyway" SmartScreen warning. Code signing with a trusted certificate removes it. To sign the installer and EXE:
 
 1. Get a code signing certificate (e.g. from DigiCert, Sectigo). You’ll get a `.pfx` file and password.
 2. In `forge.config.js`, under the Squirrel maker config, add:
@@ -43,7 +43,7 @@ Unsigned Windows EXEs may trigger SmartScreen. To sign the installer and EXE:
    certificatePassword: process.env.CERT_PASSWORD,
    ```
 
-3. Set `CERT_PASSWORD` when running `npm run make:win` (don’t commit the password).
+3. Set `CERT_FILE` (path to your .pfx), `CERT_PASSWORD`, and for the exe too: `CSC_LINK` and `CSC_KEY_PASSWORD` (same values), then run `npm run make:win` (don’t commit the password).
 
 ## Monetization
 
