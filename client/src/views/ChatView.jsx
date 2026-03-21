@@ -21,7 +21,7 @@ const getConvexSiteBaseUrl = () => CONVEX_SITE_BASE;
 
 const DEFAULT_SYSTEM_INSTRUCTION =
   'You are Shard, an expert AI assistant. Be concise and helpful. Always provide clear, accurate information and assist the user to the best of your ability.'
-const DEFAULT_MODEL = 'nvidia/nemotron-nano-12b-v2-vl:free';
+const DEFAULT_MODEL = 'arcee-ai/trinity-large-preview:free';
 
 // ——— Title bar (shared) ———
 const TitleBar = ({ onClose }) => (
