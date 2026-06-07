@@ -397,3 +397,5 @@ compile_commands.json
 spec/.hash
 patches/mtime-cache.json
 .depshash
+
+API_DOCUMENTATION.md

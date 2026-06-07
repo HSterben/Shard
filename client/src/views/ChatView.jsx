@@ -21,7 +21,7 @@ const getConvexSiteBaseUrl = () => CONVEX_SITE_BASE;
 
 const DEFAULT_SYSTEM_INSTRUCTION =
   'You are Shard, an expert AI assistant. Be concise and helpful. Always provide clear, accurate information and assist the user to the best of your ability.'
-const DEFAULT_MODEL = 'arcee-ai/trinity-large-preview:free';
+// Model is chosen on the server (Convex `openrouter_model_name` env). Client does not send it.
 
 // ——— Title bar (shared) ———
 const TitleBar = ({ onClose }) => (
@@ -68,6 +68,18 @@ const ChatView = () => {
     }
   }, []);
 
+  useEffect(() => {
+    const unsub = window.electronAPI?.onPresetsUpdated?.(() => {
+      window.electronAPI
+        ?.readPresets()
+        .then((result) => {
+          if (result?.success && result.presets) setPresets(result.presets);
+        })
+        .catch((err) => console.error('Failed to reload presets:', err));
+    });
+    return typeof unsub === 'function' ? unsub : undefined;
+  }, []);
+
   // Presets: loaded on mount from JSON file via electronAPI.readPresets().
   // presetsOverride: use when presets were just loaded in getAIResponse to avoid race.
   const getOptionsForMessage = (message, presetsOverride) => {
@@ -84,13 +96,13 @@ const ChatView = () => {
     const rawFirst = (message || '').trim().split(/\s+/)[0] || '';
     const firstWord = rawFirst.replace(/\W/g, ''); // strip punctuation so "Simplify," matches "Simplify"
     if (!firstWord || !presetsMap || Object.keys(presetsMap).length === 0) {
-      return { options: base, presetMatched: false };
+      return { options: base, presetMatched: false, presetName: undefined, presetDescription: undefined };
     }
     const key = Object.keys(presetsMap).find(
       (k) => k.toLowerCase() === firstWord.toLowerCase()
     );
     if (!key) {
-      return { options: base, presetMatched: false };
+      return { options: base, presetMatched: false, presetName: undefined, presetDescription: undefined };
     }
     const p = presetsMap[key];
     const systemInstructionRaw = p.systemInstruction ?? p.system_instruction;
@@ -98,6 +110,9 @@ const ChatView = () => {
       systemInstructionRaw != null && String(systemInstructionRaw).trim() !== ''
         ? String(systemInstructionRaw).trim()
         : DEFAULT_SYSTEM_INSTRUCTION;
+    const descRaw = p.description ?? p.desc;
+    const presetDescription =
+      descRaw != null && String(descRaw).trim() !== '' ? String(descRaw).trim() : '';
     return {
       options: {
         ...base,
@@ -110,6 +125,8 @@ const ChatView = () => {
         stop: p.stop != null ? p.stop : undefined,
       },
       presetMatched: true,
+      presetName: key,
+      presetDescription,
     };
   };
 
@@ -293,7 +310,7 @@ const ChatView = () => {
     return out;
   };
 
-  const askOpenRouterStream = async (message, files, model, options, onChunk, isRetry = false) => {
+  const askOpenRouterStream = async (message, files, options, onChunk, isRetry = false) => {
     const contextMessages = buildContextMessages(message, files);
 
     try {
@@ -308,7 +325,6 @@ const ChatView = () => {
         },
         body: JSON.stringify({
           messages: contextMessages,
-          model,
           systemInstruction: options.systemInstruction ?? DEFAULT_SYSTEM_INSTRUCTION,
           temperature: options.temperature,
           maxTokens: options.maxTokens,
@@ -328,7 +344,7 @@ const ChatView = () => {
           const refreshed = await refreshAndRetry();
           if (refreshed) {
             // Retry the request with the new token
-            return askOpenRouterStream(message, files, model, options, onChunk, true);
+            return askOpenRouterStream(message, files, options, onChunk, true);
           }
         }
         
@@ -463,7 +479,7 @@ const ChatView = () => {
     }
   };
 
-  const askOpenRouterComplete = async (message, files, model, options, isRetry = false) => {
+  const askOpenRouterComplete = async (message, files, options, isRetry = false) => {
     const contextMessages = buildContextMessages(message, files);
     if (!authToken) throw new Error('Authentication token not available. Please log in.');
     const url = `${getConvexSiteBaseUrl()}/openrouter/complete`;
@@ -480,7 +496,6 @@ const ChatView = () => {
         },
         body: JSON.stringify({
           messages: contextMessages,
-          model,
           systemInstruction: options.systemInstruction ?? DEFAULT_SYSTEM_INSTRUCTION,
           temperature: options.temperature,
           maxTokens: options.maxTokens,
@@ -508,12 +523,15 @@ const ChatView = () => {
       const err = await res.json().catch(() => ({}));
       if (!isRetry && (res.status === 401 || (err.error && err.error.includes('Authentication')))) {
         const refreshed = await refreshAndRetry();
-        if (refreshed) return askOpenRouterComplete(message, files, model, options, true);
+        if (refreshed) return askOpenRouterComplete(message, files, options, true);
       }
       throw new Error(err.error || `HTTP ${res.status}`);
     }
     const data = await res.json();
-    return { content: data.content ?? '' };
+    if (data.model) {
+      console.log('[Shard] OpenRouter model:', data.model, 'source:', data.modelSource);
+    }
+    return { content: data.content ?? '', model: data.model, modelSource: data.modelSource };
   };
 
   const getAIResponse = async (userMessage, files = []) => {
@@ -562,6 +580,21 @@ const ChatView = () => {
           const words = trimmedMessage.split(/\s+/);
           messageToSend = words.slice(1).join(' ').trim();
         }
+        if (result.presetMatched && result.presetName) {
+          setMessages((prev) => {
+            if (prev.length < 2) return prev;
+            const aiIdx = prev.length - 1;
+            const userIdx = prev.length - 2;
+            if (prev[aiIdx]?.id !== aiMessageId || prev[userIdx]?.sender !== 'user') return prev;
+            const next = [...prev];
+            next[userIdx] = {
+              ...next[userIdx],
+              presetName: result.presetName,
+              presetDescription: result.presetDescription ?? '',
+            };
+            return next;
+          });
+        }
         sessionOptionsRef.current = { ...result, presetMatched: false };
       }
       const options = sessionOptionsRef.current.options || sessionOptionsRef.current;
@@ -573,7 +606,7 @@ const ChatView = () => {
       let contentToUse = '';
       let requestError = null;
       const tryComplete = async () => {
-        const complete = await askOpenRouterComplete(messageToSend, files, DEFAULT_MODEL, options);
+        const complete = await askOpenRouterComplete(messageToSend, files, options);
         return (complete.content || '').trim();
       };
       try {
@@ -904,6 +937,37 @@ const ChatView = () => {
             {messages.map((msg) => (
               <div key={msg.id} className={`message message-${msg.sender}`}>
                 <div className="message-bubble">
+                  {msg.sender === 'user' && msg.presetName && (
+                    <span
+                      className="message-preset-indicator"
+                      title={
+                        msg.presetDescription && String(msg.presetDescription).trim()
+                          ? String(msg.presetDescription).trim()
+                          : `Preset: ${msg.presetName}`
+                      }
+                      aria-label={
+                        msg.presetDescription && String(msg.presetDescription).trim()
+                          ? String(msg.presetDescription).trim()
+                          : `Preset: ${msg.presetName}`
+                      }
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden
+                      >
+                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                      <span className="message-preset-indicator-label">{msg.presetName}</span>
+                    </span>
+                  )}
                   {msg.images && msg.images.length > 0 && (
                     <div className="message-images">
                       {msg.images.map((img, idx) => (

@@ -21,17 +21,6 @@ export async function POST(request: NextRequest) {
   try {
     const body: OpenRouterRequest = await request.json();
 
-    //? AI Model (REQUIRED)
-    if (!body.model) {
-      return NextResponse.json(
-        { error: 'Model is required' },
-        { 
-          status: 400,
-          headers: corsHeaders 
-        }
-      );
-    }
-
     //? Message (REQUIRED)
     if (!body.message && (!body.messages || body.messages.length === 0)) {
       return NextResponse.json(

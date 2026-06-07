@@ -11,9 +11,37 @@ import {
   dialog,
 } from "electron";
 import path from "node:path";
-import fs from "node:fs/promises";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
 import started from "electron-squirrel-startup";
 import Store from "electron-store";
+
+const CLIENT_ROOT = path.join(__dirname, "..", "..");
+
+function loadEnvFile(name) {
+  const filePath = path.join(CLIENT_ROOT, name);
+  if (!fs.existsSync(filePath)) return;
+  const text = fs.readFileSync(filePath, "utf8");
+  for (const line of text.split("\n")) {
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!m) continue;
+    let v = m[2].trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))
+      v = v.slice(1, -1);
+    if (!process.env[m[1]]) process.env[m[1]] = v;
+  }
+}
+
+function getOpenRouterModelNameFromEnv() {
+  return (
+    process.env.openrouter_model_name?.trim() ||
+    process.env.OPENROUTER_MODEL_NAME?.trim() ||
+    null
+  );
+}
+
+loadEnvFile(".env.local");
+loadEnvFile(".env");
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -427,6 +455,14 @@ const createTray = () => {
       click: createSettingsWindow,
     },
     {
+      label: "Manage Subscription",
+      click: createSubscriptionWindow,
+    },
+    {
+      label: "Presets",
+      click: createPresetsWindow,
+    },
+    {
       type: "separator",
     },
     {
@@ -458,6 +494,9 @@ function registerKeybind() {
 }
 
 let settingsWindow = null;
+let presetsWindow = null;
+let subscriptionWindow = null;
+
 function createSettingsWindow() {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.focus();
@@ -489,6 +528,72 @@ function createSettingsWindow() {
     settingsWindow.focus();
   });
 }
+
+function createSubscriptionWindow() {
+  if (subscriptionWindow && !subscriptionWindow.isDestroyed()) {
+    subscriptionWindow.focus();
+    return;
+  }
+  const windowIcon = getIconPath(process.platform === "win32" ? "crystal.ico" : "crystal.png");
+  subscriptionWindow = new BrowserWindow({
+    width: 480,
+    height: 520,
+    show: false,
+    frame: false,
+    title: "Shard — Manage Subscription",
+    backgroundColor: "#000000",
+    icon: windowIcon,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+    },
+  });
+  subscriptionWindow.on("closed", () => { subscriptionWindow = null; });
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    subscriptionWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL + "/subscription.html");
+  } else {
+    subscriptionWindow.loadFile(
+      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/subscription.html`)
+    );
+  }
+  subscriptionWindow.once("ready-to-show", () => {
+    subscriptionWindow.show();
+    subscriptionWindow.focus();
+  });
+}
+
+function createPresetsWindow() {
+  if (presetsWindow && !presetsWindow.isDestroyed()) {
+    presetsWindow.focus();
+    return;
+  }
+  const windowIcon = getIconPath(process.platform === "win32" ? "crystal.ico" : "crystal.png");
+  presetsWindow = new BrowserWindow({
+    width: 600,
+    height: 680,
+    show: false,
+    frame: false,
+    title: "Shard Presets",
+    backgroundColor: "#000000",
+    icon: windowIcon,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+    },
+  });
+  presetsWindow.on("closed", () => { presetsWindow = null; });
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    presetsWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL + "/presets.html");
+  } else {
+    presetsWindow.loadFile(
+      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/presets.html`)
+    );
+  }
+  presetsWindow.once("ready-to-show", () => {
+    presetsWindow.show();
+    presetsWindow.focus();
+  });
+}
+
+ipcMain.handle("get-openrouter-model-name", async () => getOpenRouterModelNameFromEnv());
 
 // Auth IPC Handlers
 ipcMain.handle("get-auth-token", async () => {
@@ -570,7 +675,7 @@ ipcMain.handle("read-presets", async () => {
   for (const presetsPath of pathsToTry) {
     if (!presetsPath) continue;
     try {
-      const data = await fs.readFile(presetsPath, "utf8");
+      const data = await fsp.readFile(presetsPath, "utf8");
       const presets = JSON.parse(data) || {};
       if (Object.keys(presets).length > 0) {
         return { success: true, presets };
@@ -582,8 +687,8 @@ ipcMain.handle("read-presets", async () => {
   const presetsPath = pathsToTry[0];
   if (lastError?.code === "ENOENT") {
     try {
-      await fs.mkdir(path.dirname(presetsPath), { recursive: true });
-      await fs.writeFile(presetsPath, JSON.stringify(DEFAULT_PRESETS, null, 2), "utf8");
+      await fsp.mkdir(path.dirname(presetsPath), { recursive: true });
+      await fsp.writeFile(presetsPath, JSON.stringify(DEFAULT_PRESETS, null, 2), "utf8");
       return { success: true, presets: DEFAULT_PRESETS };
     } catch (writeErr) {
       return { success: false, error: writeErr.message, presets: DEFAULT_PRESETS };
@@ -611,35 +716,81 @@ ipcMain.handle("export-presets", async () => {
   let content = "{}";
   for (const p of pathsToTry) {
     try {
-      content = await fs.readFile(p, "utf8");
+      content = await fsp.readFile(p, "utf8");
       break;
     } catch (_) {}
   }
-  const { canceled, filePath } = await dialog.showSaveDialog(settingsWindow || null, {
+  const parentWindow =
+    presetsWindow && !presetsWindow.isDestroyed()
+      ? presetsWindow
+      : settingsWindow && !settingsWindow.isDestroyed()
+        ? settingsWindow
+        : null;
+  const { canceled, filePath } = await dialog.showSaveDialog(parentWindow, {
     title: "Export presets",
     defaultPath: "shard-presets.json",
     filters: [{ name: "JSON", extensions: ["json"] }],
   });
   if (canceled || !filePath) return { success: false, canceled: true };
-  await fs.writeFile(filePath, content, "utf8");
+  await fsp.writeFile(filePath, content, "utf8");
   return { success: true };
 });
 
 ipcMain.handle("import-presets", async () => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(settingsWindow || null, {
+  const parentWindow =
+    presetsWindow && !presetsWindow.isDestroyed()
+      ? presetsWindow
+      : settingsWindow && !settingsWindow.isDestroyed()
+        ? settingsWindow
+        : null;
+  const { canceled, filePaths } = await dialog.showOpenDialog(parentWindow, {
     title: "Import presets",
     filters: [{ name: "JSON", extensions: ["json"] }],
     properties: ["openFile"],
   });
   if (canceled || !filePaths?.length) return { success: false, canceled: true };
   try {
-    const content = await fs.readFile(filePaths[0], "utf8");
+    const content = await fsp.readFile(filePaths[0], "utf8");
     const data = JSON.parse(content);
     if (typeof data !== "object" || data === null) throw new Error("Invalid presets JSON");
     const presetsPath = configStore.get(PRESETS_PATH_KEY) || getDefaultPresetsPath();
-    await fs.mkdir(path.dirname(presetsPath), { recursive: true });
-    await fs.writeFile(presetsPath, JSON.stringify(data, null, 2), "utf8");
+    await fsp.mkdir(path.dirname(presetsPath), { recursive: true });
+    await fsp.writeFile(presetsPath, JSON.stringify(data, null, 2), "utf8");
+    BrowserWindow.getAllWindows().forEach((win) => {
+      win.webContents.send("presets-updated");
+    });
     return { success: true, presets: data };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+function validatePresetsPayload(data) {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) {
+    return "Presets must be a JSON object with preset names as keys.";
+  }
+  for (const [k, v] of Object.entries(data)) {
+    if (typeof k !== "string" || !k.trim()) {
+      return "Each preset name must be a non-empty string.";
+    }
+    if (v === null || typeof v !== "object" || Array.isArray(v)) {
+      return `Preset "${k}" must be an object (e.g. description, systemInstruction, temperature).`;
+    }
+  }
+  return null;
+}
+
+ipcMain.handle("write-presets", async (_event, presets) => {
+  const err = validatePresetsPayload(presets);
+  if (err) return { success: false, error: err };
+  const presetsPath = configStore.get(PRESETS_PATH_KEY) || getDefaultPresetsPath();
+  try {
+    await fsp.mkdir(path.dirname(presetsPath), { recursive: true });
+    await fsp.writeFile(presetsPath, JSON.stringify(presets, null, 2), "utf8");
+    BrowserWindow.getAllWindows().forEach((win) => {
+      win.webContents.send("presets-updated");
+    });
+    return { success: true, presets };
   } catch (e) {
     return { success: false, error: e.message };
   }
@@ -689,6 +840,16 @@ ipcMain.handle("set-run-on-startup", async (_e, enabled) => {
 ipcMain.handle("close-window", async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win && !win.isDestroyed()) win.close();
+});
+
+ipcMain.handle("open-presets-window", async () => {
+  createPresetsWindow();
+  return { success: true };
+});
+
+ipcMain.handle("open-subscription-window", async () => {
+  createSubscriptionWindow();
+  return { success: true };
 });
 
 // Existing IPC Handlers

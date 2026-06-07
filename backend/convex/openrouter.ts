@@ -1,6 +1,7 @@
 import { action, mutation, query } from './_generated/server';
 import { v } from 'convex/values';
 import { api } from './_generated/api';
+import { resolveOpenRouterModelWithSource } from './openrouterModel';
 
 // Types matching the Express backend
 type MessageContent = 
@@ -285,7 +286,7 @@ export const sendMessage = action({
         })
       )
     ),
-    model: v.string(),
+    model: v.optional(v.string()),
     systemInstruction: v.optional(v.string()),
     temperature: v.optional(v.number()),
     maxTokens: v.optional(v.number()),
@@ -338,21 +339,18 @@ export const sendMessage = action({
       throw new Error('Authentication required. Please log in to use this feature.');
     }
 
-    // Validate model (REQUIRED)
-    if (!args.model) {
-      throw new Error('Model is required');
-    }
-
     // Validate message (REQUIRED)
     if (!args.message && (!args.messages || args.messages.length === 0)) {
       throw new Error('Either message or messages array is required');
     }
 
+    const { model } = resolveOpenRouterModelWithSource(args.model);
+
     // Send request to OpenRouter
     const response = await sendToOpenRouter({
       message: args.message,
       messages: args.messages,
-      model: args.model,
+      model,
       systemInstruction: args.systemInstruction,
       temperature: args.temperature,
       maxTokens: args.maxTokens,

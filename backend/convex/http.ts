@@ -1,6 +1,10 @@
 import { httpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
 import { api } from './_generated/api';
+import {
+  resolveOpenRouterModelWithSource,
+  getOpenRouterModelDiagnostics,
+} from './openrouterModel';
 
 const http = httpRouter();
 
@@ -547,6 +551,19 @@ http.route({
   }),
 });
 
+// Which OpenRouter model the server will use (env diagnostic; no auth required)
+http.route({
+  path: '/openrouter/model',
+  method: 'GET',
+  handler: httpAction(async (_, req) => {
+    const url = new URL(req.url);
+    const clientModel = url.searchParams.get('clientModel') ?? undefined;
+    return jsonResponse(getOpenRouterModelDiagnostics(clientModel), 200, {
+      'Access-Control-Allow-Origin': '*',
+    });
+  }),
+});
+
 // Streaming OpenRouter endpoint
 http.route({
   path: '/openrouter/stream',
@@ -588,13 +605,9 @@ http.route({
       const body = await req.json();
       const { messages, model, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stop } = body;
       const systemInstruction = body.systemInstruction ?? body.system_instruction;
-
-      if (!model) {
-        return new Response(
-          JSON.stringify({ error: 'Model is required' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
+      const { model: resolvedModel, source: modelSource } =
+        resolveOpenRouterModelWithSource(model);
+      console.log('[openrouter/stream] model:', resolvedModel, 'source:', modelSource);
 
       if (!messages || messages.length === 0) {
         return new Response(
@@ -630,7 +643,7 @@ http.route({
 
       // Build payload
       const payload: any = {
-        model,
+        model: resolvedModel,
         messages: processedMessages,
         stream: true,
       };
@@ -829,9 +842,12 @@ http.route({
       const body = await req.json();
       const { messages, model, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stop } = body;
       const systemInstruction = body.systemInstruction ?? body.system_instruction;
+      const { model: resolvedModel, source: modelSource } =
+        resolveOpenRouterModelWithSource(model);
+      console.log('[openrouter/complete] model:', resolvedModel, 'source:', modelSource);
 
-      if (!model || !messages || messages.length === 0) {
-        return new Response(JSON.stringify({ error: 'Model and messages are required' }), {
+      if (!messages || messages.length === 0) {
+        return new Response(JSON.stringify({ error: 'Messages are required' }), {
           status: 400,
           headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
         });
@@ -856,7 +872,7 @@ http.route({
       }
 
       const payload: any = {
-        model,
+        model: resolvedModel,
         messages: processedMessages,
         stream: false,
       };
@@ -888,10 +904,22 @@ http.route({
 
       const data = (await response.json()) as any;
       const content = data?.choices?.[0]?.message?.content ?? '';
-      return new Response(JSON.stringify({ content: typeof content === 'string' ? content : JSON.stringify(content) }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      });
+      return new Response(
+        JSON.stringify({
+          content: typeof content === 'string' ? content : JSON.stringify(content),
+          model: resolvedModel,
+          modelSource,
+        }),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'X-Shard-Model': resolvedModel,
+            'X-Shard-Model-Source': modelSource,
+          },
+        }
+      );
     } catch (error) {
       console.error('OpenRouter complete error:', error);
       return new Response(
@@ -1077,6 +1105,83 @@ http.route({
       },
       200,
       { 'Access-Control-Allow-Origin': '*' }
+    );
+  }),
+});
+
+// CORS preflight for Stripe billing portal (required when sending Authorization from Electron)
+http.route({
+  path: '/stripe/create-portal-session-auth',
+  method: 'OPTIONS',
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Max-Age': '86400',
+      },
+    });
+  }),
+});
+
+// Authenticated Stripe Customer Portal (cancel subscription, update payment method, invoices)
+http.route({
+  path: '/stripe/create-portal-session-auth',
+  method: 'POST',
+  handler: httpAction(async (ctx, req) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      return jsonResponse({ error: 'Authentication required' }, 401, {
+        'Access-Control-Allow-Origin': '*',
+      });
+    }
+
+    const workosId = identity.subject;
+    const sub = await ctx.runQuery(api.subscriptions.getByWorkosId, { workosId });
+    const stripeCustomerId = sub?.stripeCustomerId;
+
+    if (!stripeCustomerId) {
+      return jsonResponse(
+        { error: 'No billing account found. Complete checkout first, then try again.' },
+        400,
+        { 'Access-Control-Allow-Origin': '*' }
+      );
+    }
+
+    try {
+      const baseUrl = new URL(req.url).origin;
+      const returnUrl = `${baseUrl}/subscribe/portal-return`;
+
+      const form = new URLSearchParams();
+      form.set('customer', stripeCustomerId);
+      form.set('return_url', returnUrl);
+
+      const session = await stripeApiRequest('/billing_portal/sessions', form);
+      if (!session?.url) {
+        return jsonResponse({ error: 'Stripe did not return a portal URL' }, 500, {
+          'Access-Control-Allow-Origin': '*',
+        });
+      }
+
+      return jsonResponse({ url: session.url }, 200, { 'Access-Control-Allow-Origin': '*' });
+    } catch (error) {
+      return jsonResponse(
+        { error: error instanceof Error ? error.message : 'Failed to create portal session' },
+        500,
+        { 'Access-Control-Allow-Origin': '*' }
+      );
+    }
+  }),
+});
+
+http.route({
+  path: '/subscribe/portal-return',
+  method: 'GET',
+  handler: httpAction(async () => {
+    return htmlResponse(
+      '<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Billing</title></head><body style="font-family:system-ui;max-width:720px;margin:40px auto;padding:0 16px;"><h1>Billing updated</h1><p>You can close this tab and return to Shard.</p></body></html>'
     );
   }),
 });

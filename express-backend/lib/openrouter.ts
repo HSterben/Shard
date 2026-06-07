@@ -3,6 +3,16 @@ import type { OpenRouterRequest, OpenRouterResponse, OpenRouterMessage } from '@
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
+function resolveOpenRouterModel(requestModel?: string): string {
+  const fromEnv =
+    process.env.openrouter_model_name?.trim() ||
+    process.env.OPENROUTER_MODEL_NAME?.trim();
+  if (fromEnv) return fromEnv;
+  const trimmed = requestModel?.trim();
+  if (trimmed) return trimmed;
+  throw new Error('openrouter_model_name is not set in environment variables');
+}
+
 interface OpenRouterAPIRequest {
   model: string;
   messages: OpenRouterMessage[];
@@ -88,9 +98,11 @@ export async function sendToOpenRouter(
     });
   }
 
+  const model = resolveOpenRouterModel(options.model);
+
   // Build request payload
   const payload: OpenRouterAPIRequest = {
-    model: options.model,
+    model,
     messages,
   };
 

@@ -21,7 +21,8 @@
     "lint": "tsc && eslint .  --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "format": "prettier --write .",
-    "test:openrouter": "node scripts/openrouter-test.mjs"
+    "test:openrouter": "node scripts/openrouter-test.mjs",
+    "test:openrouter-model": "node scripts/openrouter-model-check.mjs"
   },
   "dependencies": {
     "@convex-dev/eslint-plugin": "^1.1.1",

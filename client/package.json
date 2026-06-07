@@ -1,7 +1,7 @@
 {
   "name": "shard",
   "productName": "Shard",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Shard - AI chat assistant",
   "main": ".vite/build/main.js",
   "scripts": {

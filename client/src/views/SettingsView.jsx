@@ -198,6 +198,18 @@ export default function SettingsView() {
         )}
 
         <section className="settings-section">
+        <h2>Subscription</h2>
+        <p className="settings-hint">View your plan, update payment details, or cancel.</p>
+        <button
+          type="button"
+          className="settings-btn primary"
+          onClick={() => api?.openSubscriptionWindow?.()}
+        >
+          Manage subscription
+        </button>
+      </section>
+
+        <section className="settings-section">
         <h2>Run on startup</h2>
         <p className="settings-hint">Open Shard when you log in to your computer.</p>
         <label className="settings-checkbox-row">
@@ -266,13 +278,16 @@ export default function SettingsView() {
         <h2>Presets (shard-presets.json)</h2>
         <p className="settings-hint">Current file: {presetsPath || "—"}</p>
         <div className="settings-presets-row">
+          <button type="button" className="settings-btn primary" onClick={() => api?.openPresetsWindow?.()}>
+            View & edit presets
+          </button>
           <button type="button" className="settings-btn" onClick={handleExport}>
             Export presets
           </button>
           <button type="button" className="settings-btn" onClick={handleImport}>
             Import presets
           </button>
-          <button type="button" className="settings-btn primary" onClick={handleDefaultPreset}>
+          <button type="button" className="settings-btn" onClick={handleDefaultPreset}>
             Use default preset
           </button>
         </div>

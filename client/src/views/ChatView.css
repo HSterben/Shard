@@ -217,6 +217,36 @@ html, body {
   gap: 8px;
 }
 
+/* Preset used on this message — hover shows description (native title) */
+.message-preset-indicator {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin: -4px 0 2px -4px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: rgba(0, 0, 0, 0.2);
+  color: inherit;
+  cursor: help;
+  max-width: 100%;
+}
+
+.message-preset-indicator svg {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.message-preset-indicator-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
 .message-text {
   word-wrap: break-word;
   white-space: pre-wrap;

@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getMessage: () => ipcRenderer.invoke('get-message'),
   closeMessageWindow: () => ipcRenderer.invoke('close-message-window'),
   
+  getOpenRouterModelName: () => ipcRenderer.invoke('get-openrouter-model-name'),
+
   // Auth APIs
   getAuthToken: () => ipcRenderer.invoke('get-auth-token'),
   refreshAuthToken: () => ipcRenderer.invoke('refresh-auth-token'),
@@ -31,6 +33,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setPresetsPathToDefault: () => ipcRenderer.invoke('set-presets-path-to-default'),
   exportPresets: () => ipcRenderer.invoke('export-presets'),
   importPresets: () => ipcRenderer.invoke('import-presets'),
+  writePresets: (presets) => ipcRenderer.invoke('write-presets', presets),
+  openPresetsWindow: () => ipcRenderer.invoke('open-presets-window'),
+  openSubscriptionWindow: () => ipcRenderer.invoke('open-subscription-window'),
+  onPresetsUpdated: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on('presets-updated', handler);
+    return () => ipcRenderer.removeListener('presets-updated', handler);
+  },
 
   // Settings: keybind, window size/position
   getKeybind: () => ipcRenderer.invoke('get-keybind'),

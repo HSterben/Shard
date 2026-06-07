@@ -34,6 +34,8 @@ loadEnvFile('.env');
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MODEL =
+  process.env.openrouter_model_name ||
+  process.env.OPENROUTER_MODEL_NAME ||
   process.env.TEST_MODEL ||
   process.env.BENCHMARK_MODEL ||
   'arcee-ai/trinity-large-preview:free';
