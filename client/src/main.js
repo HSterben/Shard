@@ -111,6 +111,8 @@ const DEFAULT_PRESETS = {
 const CONVEX_HTTP_URL = "https://strong-poodle-712.convex.site";
 const AUTH_LOGIN_URL = `${CONVEX_HTTP_URL}/auth/login`;
 const AUTH_REFRESH_URL = `${CONVEX_HTTP_URL}/auth/refresh`;
+const STRIPE_PORTAL_URL = `${CONVEX_HTTP_URL}/stripe/create-portal-session-auth`;
+const STRIPE_CHECKOUT_URL = `${CONVEX_HTTP_URL}/stripe/create-checkout-session-auth`;
 
 // Helper: Decode JWT and check if expired
 function isTokenExpired(token) {
@@ -177,6 +179,49 @@ async function refreshAccessToken() {
   } catch (err) {
     console.error("Error refreshing token:", err);
     return null;
+  }
+}
+
+async function getValidAccessToken() {
+  let token = store.get("accessToken");
+  if (token && !isTokenExpired(token)) return token;
+  if (token || store.get("refreshToken")) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      BrowserWindow.getAllWindows().forEach((win) => {
+        win.webContents.send("auth-success", { token: newToken });
+      });
+      return newToken;
+    }
+  }
+  return null;
+}
+
+async function stripeAuthedPost(url, body = {}) {
+  const token = await getValidAccessToken();
+  if (!token) {
+    return { success: false, error: "Not signed in. Please sign in and try again." };
+  }
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { success: false, error: data.error || `Request failed (${response.status})` };
+    }
+    return { success: true, data };
+  } catch (err) {
+    console.error("Stripe API request failed:", err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Network error contacting billing server",
+    };
   }
 }
 
@@ -638,6 +683,27 @@ ipcMain.handle("open-external", async (_event, url) => {
     console.error("Failed to open external URL:", err);
     return { success: false, error: "Failed to open URL" };
   }
+});
+
+ipcMain.handle("stripe-create-portal-session", async () => {
+  const result = await stripeAuthedPost(STRIPE_PORTAL_URL, {});
+  if (!result.success) return result;
+  if (!result.data?.url) {
+    return { success: false, error: "No billing portal URL returned." };
+  }
+  return { success: true, url: result.data.url };
+});
+
+ipcMain.handle("stripe-create-checkout-session", async (_event, priceId) => {
+  if (!priceId || typeof priceId !== "string") {
+    return { success: false, error: "Invalid plan selected." };
+  }
+  const result = await stripeAuthedPost(STRIPE_CHECKOUT_URL, { priceId });
+  if (!result.success) return result;
+  if (!result.data?.url) {
+    return { success: false, error: "No checkout URL returned." };
+  }
+  return { success: true, url: result.data.url };
 });
 
 ipcMain.handle("logout", async () => {

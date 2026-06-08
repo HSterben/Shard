@@ -143,18 +143,12 @@ export default function ManageSubscriptionView() {
     if (!authToken) return;
     setPortalLoading(true);
     try {
-      const res = await fetch(`${CONVEX_SITE_BASE}/stripe/create-portal-session-auth`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      if (!data.url) throw new Error("No portal URL returned.");
-      await api_?.openExternal?.(data.url);
+      const result = await api_?.stripeCreatePortalSession?.();
+      if (!result?.success) {
+        throw new Error(result?.error || "Failed to open billing portal.");
+      }
+      if (!result.url) throw new Error("No portal URL returned.");
+      await api_?.openExternal?.(result.url);
     } catch (err) {
       console.error("Failed to open billing portal:", err);
       showMessage(err instanceof Error ? err.message : "Failed to open billing portal.", true);
@@ -167,18 +161,12 @@ export default function ManageSubscriptionView() {
     if (!priceId || !authToken) return;
     setCheckoutLoading(true);
     try {
-      const res = await fetch(`${CONVEX_SITE_BASE}/stripe/create-checkout-session-auth`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({ priceId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      if (!data.url) throw new Error("No checkout URL returned.");
-      await api_?.openExternal?.(data.url);
+      const result = await api_?.stripeCreateCheckoutSession?.(priceId);
+      if (!result?.success) {
+        throw new Error(result?.error || "Failed to start checkout.");
+      }
+      if (!result.url) throw new Error("No checkout URL returned.");
+      await api_?.openExternal?.(result.url);
       showMessage("Complete checkout in your browser, then refresh this page.");
     } catch (err) {
       console.error("Failed to start checkout:", err);

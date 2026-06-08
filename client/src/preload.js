@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('auth-error', (event, data) => callback(data));
   },
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  stripeCreatePortalSession: () => ipcRenderer.invoke('stripe-create-portal-session'),
+  stripeCreateCheckoutSession: (priceId) => ipcRenderer.invoke('stripe-create-checkout-session', priceId),
 
   // Presets JSON (word -> systemInstruction, temperature, etc.); path is user-configurable
   getPresetsPath: () => ipcRenderer.invoke('get-presets-path'),
