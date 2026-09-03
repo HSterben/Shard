@@ -1,12 +1,30 @@
 import { httpRouter } from 'convex/server';
 import { httpAction } from './_generated/server';
-import { api } from './_generated/api';
+import { api, internal } from './_generated/api';
+import { getAiModelDiagnostics } from './ai/model';
 import {
-  resolveOpenRouterModelWithSource,
-  getOpenRouterModelDiagnostics,
-} from './openrouterModel';
+  generateAI,
+  streamAI,
+  weightedTokensFromUsage,
+  type ChatMessage,
+} from './ai/provider';
 
 const http = httpRouter();
+
+function proxyWebsiteBase(): string {
+  return (process.env.PROXY_WEBSITE_URL || 'http://localhost:5173').replace(/\/$/, '');
+}
+
+async function syncEntitlementsForWorkos(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ctx: any,
+  workosId: string | undefined,
+  status: string,
+  plan = 'proxy'
+) {
+  if (!workosId) return;
+  await ctx.runMutation(internal.billing.syncEntitlements, { workosId, status, plan });
+}
 
 function htmlResponse(html: string, status = 200) {
   return new Response(html, {
@@ -65,6 +83,46 @@ async function stripeApiGet(path: string): Promise<any> {
     throw new Error(message);
   }
   return data;
+}
+
+/**
+ * Prefer live Stripe subscription.status over checkout payment_status.
+ * payment_status can be "no_payment_required" (trials) or lag behind while the
+ * subscription is already active — leaving our row stuck on "pending".
+ */
+async function resolveStatusFromCheckoutSession(session: any): Promise<{
+  status: string;
+  currentPeriodEnd?: number;
+  priceId?: string;
+}> {
+  const subscriptionId =
+    typeof session?.subscription === 'string'
+      ? session.subscription
+      : session?.subscription?.id;
+
+  if (subscriptionId) {
+    try {
+      const sub = await stripeApiGet(`/subscriptions/${subscriptionId}`);
+      if (typeof sub?.status === 'string') {
+        return {
+          status: sub.status,
+          currentPeriodEnd:
+            typeof sub.current_period_end === 'number'
+              ? sub.current_period_end * 1000
+              : undefined,
+          priceId: sub?.items?.data?.[0]?.price?.id || undefined,
+        };
+      }
+    } catch (e) {
+      console.error('checkout.session.completed: failed to fetch subscription', e);
+    }
+  }
+
+  const paymentStatus = session?.payment_status;
+  if (paymentStatus === 'paid' || paymentStatus === 'no_payment_required') {
+    return { status: 'active' };
+  }
+  return { status: 'pending' };
 }
 
 function hexFromBuffer(buffer: ArrayBuffer) {
@@ -138,15 +196,20 @@ const WORKOS_CLIENT_ID = 'client_01KGNG7JGSBPA9HZWGVKZ8N8MS';
 const WORKOS_REDIRECT_URI = 'https://strong-poodle-712.convex.site/auth/callback';
 
 // Start OAuth flow - redirects to WorkOS
+// ?state=web → callback returns to PROXY_WEBSITE_URL (browser). Default → Electron (proxy-x://).
 http.route({
   path: '/auth/login',
   method: 'GET',
-  handler: httpAction(async () => {
+  handler: httpAction(async (_, req) => {
+    const loginUrl = new URL(req.url);
+    const state = loginUrl.searchParams.get('state') || 'desktop';
+
     const authUrl = new URL('https://api.workos.com/user_management/authorize');
     authUrl.searchParams.set('client_id', WORKOS_CLIENT_ID);
     authUrl.searchParams.set('redirect_uri', WORKOS_REDIRECT_URI);
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('provider', 'authkit');
+    authUrl.searchParams.set('state', state);
 
     return new Response(null, {
       status: 302,
@@ -165,22 +228,40 @@ http.route({
     const url = new URL(req.url);
     const code = url.searchParams.get('code');
     const error = url.searchParams.get('error');
+    const state = url.searchParams.get('state') || 'desktop';
+    const isWeb = state === 'web';
+    const webBase = proxyWebsiteBase();
 
     if (error) {
-      // Redirect to error page in Electron app
+      if (isWeb) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: `${webBase}/auth/callback?error=${encodeURIComponent(error)}`,
+          },
+        });
+      }
       return new Response(null, {
         status: 302,
         headers: {
-          Location: `shard://auth/error?message=${encodeURIComponent(error)}`,
+          Location: `proxy-x://auth/error?message=${encodeURIComponent(error)}`,
         },
       });
     }
 
     if (!code) {
+      if (isWeb) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: `${webBase}/auth/callback?error=${encodeURIComponent('No code provided')}`,
+          },
+        });
+      }
       return new Response(null, {
         status: 302,
         headers: {
-          Location: 'shard://auth/error?message=No%20code%20provided',
+          Location: 'proxy-x://auth/error?message=No%20code%20provided',
         },
       });
     }
@@ -207,30 +288,59 @@ http.route({
       if (!tokenResponse.ok) {
         const errorData = await tokenResponse.json();
         console.error('Token exchange failed:', errorData);
+        if (isWeb) {
+          return new Response(null, {
+            status: 302,
+            headers: {
+              Location: `${webBase}/auth/callback?error=${encodeURIComponent('Authentication failed')}`,
+            },
+          });
+        }
         return new Response(null, {
           status: 302,
           headers: {
-            Location: `shard://auth/error?message=${encodeURIComponent('Authentication failed')}`,
+            Location: `proxy-x://auth/error?message=${encodeURIComponent('Authentication failed')}`,
           },
         });
       }
 
       const tokenData = await tokenResponse.json();
 
-      // Redirect to Electron app with the access token
-      // The access_token is a JWT that can be verified by Convex
+      if (isWeb) {
+        const params = new URLSearchParams({
+          token: tokenData.access_token,
+        });
+        if (tokenData.refresh_token) {
+          params.set('refresh', tokenData.refresh_token);
+        }
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: `${webBase}/auth/callback?${params.toString()}`,
+          },
+        });
+      }
+
       return new Response(null, {
         status: 302,
         headers: {
-          Location: `shard://auth/success?token=${encodeURIComponent(tokenData.access_token)}&refresh=${encodeURIComponent(tokenData.refresh_token || '')}`,
+          Location: `proxy-x://auth/success?token=${encodeURIComponent(tokenData.access_token)}&refresh=${encodeURIComponent(tokenData.refresh_token || '')}`,
         },
       });
     } catch (err) {
       console.error('Auth callback error:', err);
+      if (isWeb) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: `${webBase}/auth/callback?error=${encodeURIComponent('Authentication failed')}`,
+          },
+        });
+      }
       return new Response(null, {
         status: 302,
         headers: {
-          Location: 'shard://auth/error?message=Authentication%20failed',
+          Location: 'proxy-x://auth/error?message=Authentication%20failed',
         },
       });
     }
@@ -551,384 +661,333 @@ http.route({
   }),
 });
 
-// Which OpenRouter model the server will use (env diagnostic; no auth required)
-http.route({
-  path: '/openrouter/model',
-  method: 'GET',
-  handler: httpAction(async (_, req) => {
-    const url = new URL(req.url);
-    const clientModel = url.searchParams.get('clientModel') ?? undefined;
-    return jsonResponse(getOpenRouterModelDiagnostics(clientModel), 200, {
+function corsJson(body: unknown, status = 200, extraHeaders: Record<string, string> = {}) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'no-store',
+      ...extraHeaders,
+    },
+  });
+}
+
+function corsOptions() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Max-Age': '86400',
+    },
+  });
+}
+
+function processMessages(
+  messages: ChatMessage[],
+  systemInstruction?: string
+): ChatMessage[] {
+  const processed = messages.map((msg) => ({
+    role: msg.role,
+    content: msg.content,
+  }));
+  if (systemInstruction && !processed.some((m) => m.role === 'system')) {
+    processed.unshift({ role: 'system', content: systemInstruction });
+  }
+  return processed;
+}
+
+async function recordUsage(
+  ctx: { runMutation: (ref: any, args: any) => Promise<any> },
+  workosId: string,
+  usage: { prompt_tokens?: number; completion_tokens?: number } | null | undefined
+) {
+  if (!usage) return;
+  const inputTokens = usage.prompt_tokens ?? 0;
+  const outputTokens = usage.completion_tokens ?? 0;
+  if (inputTokens === 0 && outputTokens === 0) return;
+  try {
+    await ctx.runMutation(internal.usage.addUsage, {
+      workosId,
+      inputTokens,
+      outputTokens,
+      weightedTokens: weightedTokensFromUsage(usage),
     });
-  }),
+  } catch (err) {
+    console.error('[usage] failed to record usage:', err);
+  }
+}
+
+/** Model diagnostic (env); no auth. Paths kept for desktop compatibility. */
+const modelDiagnosticHandler = httpAction(async (_, req) => {
+  const url = new URL(req.url);
+  const clientModel = url.searchParams.get('clientModel') ?? undefined;
+  return jsonResponse(getAiModelDiagnostics(clientModel), 200, {
+    'Access-Control-Allow-Origin': '*',
+  });
 });
 
-// Streaming OpenRouter endpoint
-http.route({
-  path: '/openrouter/stream',
-  method: 'OPTIONS',
-  handler: httpAction(async () => {
-    // Handle CORS preflight
-    return new Response(null, {
-      status: 204,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        'Access-Control-Max-Age': '86400',
-      },
-    });
-  }),
-});
+http.route({ path: '/openrouter/model', method: 'GET', handler: modelDiagnosticHandler });
+http.route({ path: '/ai/model', method: 'GET', handler: modelDiagnosticHandler });
 
-http.route({
-  path: '/openrouter/stream',
-  method: 'POST',
-  handler: httpAction(async (ctx, req) => {
-    // Check authentication
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { 
-          status: 401, 
-          headers: { 
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-          } 
-        }
-      );
+/** Streaming Luna endpoint — quota check first, usage after stream finishes. */
+const streamHandler = httpAction(async (ctx, req) => {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    return corsJson({ error: 'Authentication required' }, 401);
+  }
+
+  const workosId = identity.subject;
+
+  try {
+    const gate = await ctx.runQuery(internal.usage.assertCanUseAI, { workosId });
+    if (gate.ok === false) {
+      const status = gate.code === 'subscription_required' ? 402 : 429;
+      return corsJson({ error: gate.reason, code: gate.code }, status);
     }
 
+    const body = await req.json();
+    const {
+      messages,
+      model,
+      temperature,
+      maxTokens,
+      topP,
+      frequencyPenalty,
+      presencePenalty,
+      stop,
+    } = body;
+    const systemInstruction = body.systemInstruction ?? body.system_instruction;
+
+    if (!messages || messages.length === 0) {
+      return corsJson({ error: 'Messages are required' }, 400);
+    }
+
+    const processedMessages = processMessages(messages, systemInstruction);
+
+    let upstream;
     try {
-      const body = await req.json();
-      const { messages, model, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stop } = body;
-      const systemInstruction = body.systemInstruction ?? body.system_instruction;
-      const { model: resolvedModel, source: modelSource } =
-        resolveOpenRouterModelWithSource(model);
-      console.log('[openrouter/stream] model:', resolvedModel, 'source:', modelSource);
-
-      if (!messages || messages.length === 0) {
-        return new Response(
-          JSON.stringify({ error: 'Messages are required' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Process messages and add system instruction if provided
-      let processedMessages = [...messages];
-      
-      // Add system instruction if provided and not already present
-      if (systemInstruction) {
-        const hasSystemMessage = processedMessages.some(msg => msg.role === 'system');
-        if (!hasSystemMessage) {
-          processedMessages.unshift({
-            role: 'system',
-            content: systemInstruction,
-          });
-        }
-      }
-
-      const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-      const OPENROUTER_HTTP_REFERER = process.env.OPENROUTER_HTTP_REFERER || '';
-      const OPENROUTER_X_TITLE = process.env.OPENROUTER_X_TITLE || 'Shard';
-
-      if (!OPENROUTER_API_KEY) {
-        return new Response(
-          JSON.stringify({ error: 'OpenRouter API key not configured' }),
-          { status: 500, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Build payload
-      const payload: any = {
-        model: resolvedModel,
+      upstream = await streamAI({
         messages: processedMessages,
-        stream: true,
-      };
-
-      if (temperature !== undefined) payload.temperature = temperature;
-      if (maxTokens !== undefined) payload.max_tokens = maxTokens;
-      if (topP !== undefined) payload.top_p = topP;
-      if (frequencyPenalty !== undefined) payload.frequency_penalty = frequencyPenalty;
-      if (presencePenalty !== undefined) payload.presence_penalty = presencePenalty;
-      if (stop !== undefined) payload.stop = stop;
-
-      // Call OpenRouter with streaming
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-          'HTTP-Referer': OPENROUTER_HTTP_REFERER,
-          'X-Title': OPENROUTER_X_TITLE,
-        },
-        body: JSON.stringify(payload),
+        model,
+        temperature,
+        maxTokens,
+        topP,
+        frequencyPenalty,
+        presencePenalty,
+        stop,
       });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'OpenRouter API error';
+      const status = message.includes('OPENROUTER_API_KEY') ? 500 : 502;
+      return corsJson({ error: message }, status);
+    }
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        return new Response(
-          JSON.stringify({ error: errorData.error?.message || 'OpenRouter API error' }),
-          { 
-            status: response.status, 
-            headers: { 
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*',
-            } 
-          }
-        );
-      }
+    const { response, model: resolvedModel, modelSource } = upstream;
+    console.log('[ai/stream] model:', resolvedModel, 'source:', modelSource);
 
-      // Create a readable stream that proxies OpenRouter's stream
-      const stream = new ReadableStream({
-        async start(controller) {
-          const reader = response.body?.getReader();
-          const decoder = new TextDecoder();
-          let buffer = ''; // Buffer for incomplete lines
-          // Keepalive: send a comment every 4s so proxies/idle timeouts don't kill the stream before first token
-          const keepaliveMs = 4000;
-          const keepaliveId = setInterval(() => {
-            try {
-              controller.enqueue(new TextEncoder().encode(': keepalive\n\n'));
-            } catch {
-              // controller may be closed
-            }
-          }, keepaliveMs);
+    const stream = new ReadableStream({
+      async start(controller) {
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let lastUsage: {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+        } | null = null;
 
-          if (!reader) {
-            clearInterval(keepaliveId);
-            controller.close();
-            return;
-          }
-
+        const keepaliveMs = 4000;
+        const keepaliveId = setInterval(() => {
           try {
-            while (true) {
-              const { done, value } = await reader.read();
-              
-              if (done) {
-                clearInterval(keepaliveId);
-                // Process any remaining buffered data
-                if (buffer.trim()) {
-                  const lines = buffer.split('\n');
-              for (const line of lines) {
-                // Handle SSE format: "data: {...}" or just "data:"
-                if (line.startsWith('data: ')) {
-                  const data = line.slice(6).trim();
-                  if (data === '[DONE]') {
-                    clearInterval(keepaliveId);
-                    controller.close();
-                    return;
-                  }
-                  if (data) {
-                    try {
-                      const parsed = JSON.parse(data);
-                      // Forward the SSE data
-                      controller.enqueue(new TextEncoder().encode(`data: ${data}\n\n`));
-                    } catch (e) {
-                      // Skip invalid JSON
-                      console.warn('Skipping invalid JSON in stream:', data.substring(0, 100));
-                    }
-                  }
-                }
-              }
-                }
-                clearInterval(keepaliveId);
-                controller.close();
-                break;
-              }
-
-              // Decode chunk and append to buffer
-              const chunk = decoder.decode(value, { stream: true });
-              buffer += chunk;
-
-              // Process complete lines (those ending with \n)
-              const lines = buffer.split('\n');
-              // Keep the last incomplete line in buffer
-              buffer = lines.pop() || '';
-
-              for (const line of lines) {
-                // Handle SSE format: "data: {...}" or just "data:"
-                if (line.startsWith('data: ')) {
-                  const data = line.slice(6).trim();
-                  if (data === '[DONE]') {
-                    clearInterval(keepaliveId);
-                    controller.close();
-                    return;
-                  }
-                  if (data) {
-                    try {
-                      const parsed = JSON.parse(data);
-                      // Forward the SSE data
-                      controller.enqueue(new TextEncoder().encode(`data: ${data}\n\n`));
-                    } catch (e) {
-                      // Skip invalid JSON
-                      console.warn('Skipping invalid JSON in stream:', data.substring(0, 100));
-                    }
-                  }
-                }
-              }
-            }
-          } catch (error) {
-            clearInterval(keepaliveId);
-            console.error('Stream processing error:', error);
-            // Send error as SSE event before closing
-            try {
-              controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ error: error instanceof Error ? error.message : 'Stream error' })}\n\n`));
-            } catch (e) {
-              // Ignore errors when sending error message
-            }
-            controller.error(error);
+            controller.enqueue(new TextEncoder().encode(': keepalive\n\n'));
+          } catch {
+            // controller may be closed
           }
-        },
-      });
+        }, keepaliveMs);
 
-      return new Response(stream, {
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        },
-      });
-    } catch (error) {
-      console.error('Streaming error:', error);
-      return new Response(
-        JSON.stringify({ error: error instanceof Error ? error.message : 'Internal server error' }),
-        { 
-          status: 500, 
-          headers: { 
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-          } 
+        const handleDataLine = (data: string): 'done' | 'continue' => {
+          if (data === '[DONE]') return 'done';
+          if (!data) return 'continue';
+          try {
+            const parsed = JSON.parse(data) as {
+              usage?: { prompt_tokens?: number; completion_tokens?: number };
+            };
+            if (parsed.usage) lastUsage = parsed.usage;
+            controller.enqueue(new TextEncoder().encode(`data: ${data}\n\n`));
+          } catch {
+            console.warn('Skipping invalid JSON in stream:', data.substring(0, 100));
+          }
+          return 'continue';
+        };
+
+        if (!reader) {
+          clearInterval(keepaliveId);
+          controller.close();
+          return;
         }
-      );
-    }
-  }),
-});
 
-// Non-streaming OpenRouter endpoint (fallback when stream times out; Convex action can run longer)
-http.route({
-  path: '/openrouter/complete',
-  method: 'OPTIONS',
-  handler: httpAction(async () => {
-    return new Response(null, {
-      status: 204,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        'Access-Control-Max-Age': '86400',
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) {
+              if (buffer.trim()) {
+                for (const line of buffer.split('\n')) {
+                  if (line.startsWith('data: ')) {
+                    if (handleDataLine(line.slice(6).trim()) === 'done') {
+                      clearInterval(keepaliveId);
+                      await recordUsage(ctx, workosId, lastUsage);
+                      controller.close();
+                      return;
+                    }
+                  }
+                }
+              }
+              clearInterval(keepaliveId);
+              await recordUsage(ctx, workosId, lastUsage);
+              controller.close();
+              break;
+            }
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              if (handleDataLine(line.slice(6).trim()) === 'done') {
+                clearInterval(keepaliveId);
+                await recordUsage(ctx, workosId, lastUsage);
+                controller.close();
+                return;
+              }
+            }
+          }
+        } catch (error) {
+          clearInterval(keepaliveId);
+          console.error('Stream processing error:', error);
+          try {
+            controller.enqueue(
+              new TextEncoder().encode(
+                `data: ${JSON.stringify({
+                  error: error instanceof Error ? error.message : 'Stream error',
+                })}\n\n`
+              )
+            );
+          } catch {
+            // ignore
+          }
+          controller.error(error);
+        }
       },
     });
-  }),
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'X-Proxy-Model': resolvedModel,
+        'X-Proxy-Model-Source': modelSource,
+      },
+    });
+  } catch (error) {
+    console.error('Streaming error:', error);
+    return corsJson(
+      { error: error instanceof Error ? error.message : 'Internal server error' },
+      500
+    );
+  }
 });
 
-http.route({
-  path: '/openrouter/complete',
-  method: 'POST',
-  handler: httpAction(async (ctx, req) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      return new Response(JSON.stringify({ error: 'Authentication required' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      });
+http.route({ path: '/openrouter/stream', method: 'OPTIONS', handler: httpAction(async () => corsOptions()) });
+http.route({ path: '/openrouter/stream', method: 'POST', handler: streamHandler });
+http.route({ path: '/ai/stream', method: 'OPTIONS', handler: httpAction(async () => corsOptions()) });
+http.route({ path: '/ai/stream', method: 'POST', handler: streamHandler });
+
+/** Non-streaming Luna endpoint (fallback when stream times out). */
+const completeHandler = httpAction(async (ctx, req) => {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    return corsJson({ error: 'Authentication required' }, 401);
+  }
+
+  const workosId = identity.subject;
+
+  try {
+    const gate = await ctx.runQuery(internal.usage.assertCanUseAI, { workosId });
+    if (gate.ok === false) {
+      const status = gate.code === 'subscription_required' ? 402 : 429;
+      return corsJson({ error: gate.reason, code: gate.code }, status);
     }
 
-    try {
-      const body = await req.json();
-      const { messages, model, temperature, maxTokens, topP, frequencyPenalty, presencePenalty, stop } = body;
-      const systemInstruction = body.systemInstruction ?? body.system_instruction;
-      const { model: resolvedModel, source: modelSource } =
-        resolveOpenRouterModelWithSource(model);
-      console.log('[openrouter/complete] model:', resolvedModel, 'source:', modelSource);
+    const body = await req.json();
+    const {
+      messages,
+      model,
+      temperature,
+      maxTokens,
+      topP,
+      frequencyPenalty,
+      presencePenalty,
+      stop,
+    } = body;
+    const systemInstruction = body.systemInstruction ?? body.system_instruction;
 
-      if (!messages || messages.length === 0) {
-        return new Response(JSON.stringify({ error: 'Messages are required' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-        });
-      }
-
-      let processedMessages = [...messages];
-      if (systemInstruction) {
-        const hasSystem = processedMessages.some((m: any) => m.role === 'system');
-        if (!hasSystem) {
-          processedMessages = [{ role: 'system', content: systemInstruction }, ...processedMessages];
-        }
-      }
-
-      const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-      const OPENROUTER_HTTP_REFERER = process.env.OPENROUTER_HTTP_REFERER || '';
-      const OPENROUTER_X_TITLE = process.env.OPENROUTER_X_TITLE || 'Shard';
-      if (!OPENROUTER_API_KEY) {
-        return new Response(JSON.stringify({ error: 'OpenRouter API key not configured' }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-        });
-      }
-
-      const payload: any = {
-        model: resolvedModel,
-        messages: processedMessages,
-        stream: false,
-      };
-      if (temperature !== undefined) payload.temperature = temperature;
-      if (maxTokens !== undefined) payload.max_tokens = maxTokens;
-      if (topP !== undefined) payload.top_p = topP;
-      if (frequencyPenalty !== undefined) payload.frequency_penalty = frequencyPenalty;
-      if (presencePenalty !== undefined) payload.presence_penalty = presencePenalty;
-      if (stop !== undefined) payload.stop = stop;
-
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-          'HTTP-Referer': OPENROUTER_HTTP_REFERER,
-          'X-Title': OPENROUTER_X_TITLE,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        return new Response(
-          JSON.stringify({ error: (err as any).error?.message || 'OpenRouter API error' }),
-          { status: response.status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
-        );
-      }
-
-      const data = (await response.json()) as any;
-      const content = data?.choices?.[0]?.message?.content ?? '';
-      return new Response(
-        JSON.stringify({
-          content: typeof content === 'string' ? content : JSON.stringify(content),
-          model: resolvedModel,
-          modelSource,
-        }),
-        {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'X-Shard-Model': resolvedModel,
-            'X-Shard-Model-Source': modelSource,
-          },
-        }
-      );
-    } catch (error) {
-      console.error('OpenRouter complete error:', error);
-      return new Response(
-        JSON.stringify({ error: error instanceof Error ? error.message : 'Internal server error' }),
-        { status: 500, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
-      );
+    if (!messages || messages.length === 0) {
+      return corsJson({ error: 'Messages are required' }, 400);
     }
-  }),
+
+    const processedMessages = processMessages(messages, systemInstruction);
+
+    const result = await generateAI({
+      messages: processedMessages,
+      model,
+      temperature,
+      maxTokens,
+      topP,
+      frequencyPenalty,
+      presencePenalty,
+      stop,
+    });
+
+    console.log('[ai/complete] model:', result.model, 'source:', result.modelSource);
+
+    // Return content first; accounting after generation (does not block tokens on stream path)
+    const responseBody = {
+      content: result.content,
+      model: result.model,
+      modelSource: result.modelSource,
+    };
+
+    await recordUsage(ctx, workosId, result.usage);
+
+    return new Response(JSON.stringify(responseBody), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'X-Proxy-Model': result.model,
+        'X-Proxy-Model-Source': result.modelSource,
+      },
+    });
+  } catch (error) {
+    console.error('AI complete error:', error);
+    return corsJson(
+      { error: error instanceof Error ? error.message : 'Internal server error' },
+      500
+    );
+  }
 });
+
+http.route({ path: '/openrouter/complete', method: 'OPTIONS', handler: httpAction(async () => corsOptions()) });
+http.route({ path: '/openrouter/complete', method: 'POST', handler: completeHandler });
+http.route({ path: '/ai/complete', method: 'OPTIONS', handler: httpAction(async () => corsOptions()) });
+http.route({ path: '/ai/complete', method: 'POST', handler: completeHandler });
 
 // Public subscription page (browser)
 http.route({
@@ -944,7 +1003,7 @@ http.route({
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Shard Subscription</title>
+    <title>PROXY X Subscription</title>
     <style>
       body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
       .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; }
@@ -956,7 +1015,7 @@ http.route({
     </style>
   </head>
   <body>
-    <h1>Subscribe to Shard</h1>
+    <h1>Subscribe to PROXY X</h1>
     <p class="muted">Enter your email, pick a plan, and you’ll be redirected to Stripe Checkout.</p>
 
     <div class="card">
@@ -1151,8 +1210,8 @@ http.route({
     }
 
     try {
-      const baseUrl = new URL(req.url).origin;
-      const returnUrl = `${baseUrl}/subscribe/portal-return`;
+      const site = proxyWebsiteBase();
+      const returnUrl = `${site}/account/billing`;
 
       const form = new URLSearchParams();
       form.set('customer', stripeCustomerId);
@@ -1181,7 +1240,7 @@ http.route({
   method: 'GET',
   handler: httpAction(async () => {
     return htmlResponse(
-      '<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Billing</title></head><body style="font-family:system-ui;max-width:720px;margin:40px auto;padding:0 16px;"><h1>Billing updated</h1><p>You can close this tab and return to Shard.</p></body></html>'
+      '<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Billing</title></head><body style="font-family:system-ui;max-width:720px;margin:40px auto;padding:0 16px;"><h1>Billing updated</h1><p>You can close this tab and return to PROXY X.</p></body></html>'
     );
   }),
 });
@@ -1218,14 +1277,15 @@ http.route({
         });
       }
 
-      const baseUrl = new URL(req.url).origin;
-      const successUrl = `${baseUrl}/subscribe/success?session_id={CHECKOUT_SESSION_ID}`;
-      const cancelUrl = `${baseUrl}/subscribe/cancel`;
+      const site = proxyWebsiteBase();
+      const successUrl = `${site}/account/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}`;
+      const cancelUrl = `${site}/account/billing?checkout=cancel`;
 
       await ctx.runMutation(api.subscriptions.upsertByWorkosId, {
         workosId,
         email,
         status: 'pending',
+        plan: 'proxy',
         priceId,
       });
 
@@ -1242,8 +1302,10 @@ http.route({
       // Make WorkOS id + email available in webhook events
       form.set('subscription_data[metadata][workosId]', workosId);
       form.set('subscription_data[metadata][email]', email);
+      form.set('subscription_data[metadata][plan]', 'proxy');
       form.set('metadata[workosId]', workosId);
       form.set('metadata[email]', email);
+      form.set('metadata[plan]', 'proxy');
 
       const session = await stripeApiRequest('/checkout/sessions', form);
       if (!session?.url) {
@@ -1311,22 +1373,56 @@ http.route({
           session?.customer_email ||
           session?.metadata?.email ||
           undefined;
+        const subscriptionId =
+          typeof session?.subscription === 'string'
+            ? session.subscription
+            : session?.subscription?.id || undefined;
+        const customerId =
+          typeof session?.customer === 'string'
+            ? session.customer
+            : session?.customer?.id || undefined;
+
+        const resolved = await resolveStatusFromCheckoutSession(session);
+        const status = resolved.status;
 
         if (workosId) {
           await ctx.runMutation(api.subscriptions.upsertByWorkosId, {
             workosId,
             email,
-            status: session?.payment_status === 'paid' ? 'active' : 'pending',
-            stripeCustomerId: session?.customer || undefined,
-            stripeSubscriptionId: session?.subscription || undefined,
+            status,
+            plan: 'proxy',
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: subscriptionId,
+            currentPeriodEnd: resolved.currentPeriodEnd,
+            priceId: resolved.priceId,
           });
+          await syncEntitlementsForWorkos(ctx, workosId, status, 'proxy');
         } else if (email) {
-          await ctx.runMutation(api.subscriptions.upsertByEmail, {
-            email,
-            status: session?.payment_status === 'paid' ? 'active' : 'pending',
-            stripeCustomerId: session?.customer || undefined,
-            stripeSubscriptionId: session?.subscription || undefined,
-          });
+          // Prefer linking to WorkOS when we can, so desktop getMyAccount finds the row
+          const user = await ctx.runQuery(api.users.getUserByEmail, { email });
+          if (user?.workosId) {
+            await ctx.runMutation(api.subscriptions.upsertByWorkosId, {
+              workosId: user.workosId,
+              email,
+              status,
+              plan: 'proxy',
+              stripeCustomerId: customerId,
+              stripeSubscriptionId: subscriptionId,
+              currentPeriodEnd: resolved.currentPeriodEnd,
+              priceId: resolved.priceId,
+            });
+            await syncEntitlementsForWorkos(ctx, user.workosId, status, 'proxy');
+          } else {
+            await ctx.runMutation(api.subscriptions.upsertByEmail, {
+              email,
+              status,
+              plan: 'proxy',
+              stripeCustomerId: customerId,
+              stripeSubscriptionId: subscriptionId,
+              currentPeriodEnd: resolved.currentPeriodEnd,
+              priceId: resolved.priceId,
+            });
+          }
         }
       }
 
@@ -1343,16 +1439,20 @@ http.route({
         const priceId = sub?.items?.data?.[0]?.price?.id || undefined;
         const status = sub?.status || 'unknown';
 
+        const plan = sub?.metadata?.plan || 'proxy';
+
         if (workosId) {
           await ctx.runMutation(api.subscriptions.upsertByWorkosId, {
             workosId,
             email,
             status,
+            plan,
             stripeCustomerId: sub?.customer || undefined,
             stripeSubscriptionId: sub?.id || undefined,
             currentPeriodEnd,
             priceId,
           });
+          await syncEntitlementsForWorkos(ctx, workosId, status, plan);
         } else if (email) {
           await ctx.runMutation(api.subscriptions.upsertByEmail, {
             email,
@@ -1368,6 +1468,7 @@ http.route({
           const updated = await ctx.runMutation(api.subscriptions.updateByStripeSubscriptionId, {
             stripeSubscriptionId: sub.id,
             status,
+            plan,
             stripeCustomerId: sub?.customer || undefined,
             currentPeriodEnd,
             priceId,
@@ -1378,6 +1479,7 @@ http.route({
               stripeCustomerId: sub.customer,
               stripeSubscriptionId: sub.id,
               status,
+              plan,
               currentPeriodEnd,
               priceId,
             });
@@ -1393,11 +1495,13 @@ http.route({
                       workosId: user.workosId,
                       email: customerEmail,
                       status,
+                      plan,
                       stripeCustomerId: sub.customer,
                       stripeSubscriptionId: sub.id,
                       currentPeriodEnd,
                       priceId,
                     });
+                    await syncEntitlementsForWorkos(ctx, user.workosId, status, plan);
                   } else {
                     await ctx.runMutation(api.subscriptions.upsertByEmail, {
                       email: customerEmail,
@@ -1430,13 +1534,16 @@ http.route({
           undefined;
 
         if (workosId) {
+          const status = type === 'invoice.payment_succeeded' ? 'active' : 'past_due';
           await ctx.runMutation(api.subscriptions.upsertByWorkosId, {
             workosId,
             email,
-            status: type === 'invoice.payment_succeeded' ? 'active' : 'past_due',
+            status,
+            plan: 'proxy',
             stripeCustomerId: invoice?.customer || undefined,
             stripeSubscriptionId: invoice?.subscription || undefined,
           });
+          await syncEntitlementsForWorkos(ctx, workosId, status, 'proxy');
         } else if (email) {
           await ctx.runMutation(api.subscriptions.upsertByEmail, {
             email,

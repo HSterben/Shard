@@ -5,6 +5,7 @@ export const upsertByEmail = mutation({
   args: {
     email: v.string(),
     status: v.string(),
+    plan: v.optional(v.string()),
     stripeCustomerId: v.optional(v.string()),
     stripeSubscriptionId: v.optional(v.string()),
     currentPeriodEnd: v.optional(v.number()),
@@ -23,6 +24,7 @@ export const upsertByEmail = mutation({
       status: args.status,
       updatedAt: now,
     };
+    if (args.plan !== undefined) patch.plan = args.plan;
     if (args.stripeCustomerId !== undefined) patch.stripeCustomerId = args.stripeCustomerId;
     if (args.stripeSubscriptionId !== undefined) patch.stripeSubscriptionId = args.stripeSubscriptionId;
     if (args.currentPeriodEnd !== undefined) patch.currentPeriodEnd = args.currentPeriodEnd;
@@ -36,6 +38,7 @@ export const upsertByEmail = mutation({
     return await ctx.db.insert('subscriptions', {
       workosId: undefined,
       email: args.email,
+      plan: args.plan,
       stripeCustomerId: args.stripeCustomerId,
       stripeSubscriptionId: args.stripeSubscriptionId,
       status: args.status,
@@ -58,6 +61,7 @@ export const getByEmail = query({
       stripeCustomerId: v.optional(v.string()),
       stripeSubscriptionId: v.optional(v.string()),
       status: v.string(),
+      plan: v.optional(v.string()),
       currentPeriodEnd: v.optional(v.number()),
       priceId: v.optional(v.string()),
       createdAt: v.number(),
@@ -78,6 +82,7 @@ export const upsertByWorkosId = mutation({
     workosId: v.string(),
     email: v.optional(v.string()),
     status: v.string(),
+    plan: v.optional(v.string()),
     stripeCustomerId: v.optional(v.string()),
     stripeSubscriptionId: v.optional(v.string()),
     currentPeriodEnd: v.optional(v.number()),
@@ -97,6 +102,7 @@ export const upsertByWorkosId = mutation({
       updatedAt: now,
     };
     if (args.email !== undefined) patch.email = args.email;
+    if (args.plan !== undefined) patch.plan = args.plan;
     if (args.stripeCustomerId !== undefined) patch.stripeCustomerId = args.stripeCustomerId;
     if (args.stripeSubscriptionId !== undefined) patch.stripeSubscriptionId = args.stripeSubscriptionId;
     if (args.currentPeriodEnd !== undefined) patch.currentPeriodEnd = args.currentPeriodEnd;
@@ -110,6 +116,7 @@ export const upsertByWorkosId = mutation({
     return await ctx.db.insert('subscriptions', {
       workosId: args.workosId,
       email: args.email,
+      plan: args.plan,
       stripeCustomerId: args.stripeCustomerId,
       stripeSubscriptionId: args.stripeSubscriptionId,
       status: args.status,
@@ -132,6 +139,7 @@ export const getByWorkosId = query({
       stripeCustomerId: v.optional(v.string()),
       stripeSubscriptionId: v.optional(v.string()),
       status: v.string(),
+      plan: v.optional(v.string()),
       currentPeriodEnd: v.optional(v.number()),
       priceId: v.optional(v.string()),
       createdAt: v.number(),
@@ -152,6 +160,7 @@ export const updateByStripeSubscriptionId = mutation({
   args: {
     stripeSubscriptionId: v.string(),
     status: v.string(),
+    plan: v.optional(v.string()),
     stripeCustomerId: v.optional(v.string()),
     currentPeriodEnd: v.optional(v.number()),
     priceId: v.optional(v.string()),
@@ -167,6 +176,7 @@ export const updateByStripeSubscriptionId = mutation({
     if (!existing) return null;
     const now = Date.now();
     const patch: Record<string, unknown> = { status: args.status, updatedAt: now };
+    if (args.plan !== undefined) patch.plan = args.plan;
     if (args.stripeCustomerId !== undefined) patch.stripeCustomerId = args.stripeCustomerId;
     if (args.currentPeriodEnd !== undefined) patch.currentPeriodEnd = args.currentPeriodEnd;
     if (args.priceId !== undefined) patch.priceId = args.priceId;
@@ -181,6 +191,7 @@ export const updateByStripeCustomerId = mutation({
     stripeCustomerId: v.string(),
     stripeSubscriptionId: v.string(),
     status: v.string(),
+    plan: v.optional(v.string()),
     currentPeriodEnd: v.optional(v.number()),
     priceId: v.optional(v.string()),
   },
@@ -192,13 +203,15 @@ export const updateByStripeCustomerId = mutation({
       .first();
     if (!existing) return null;
     const now = Date.now();
-    await ctx.db.patch(existing._id, {
+    const patch: Record<string, unknown> = {
       stripeSubscriptionId: args.stripeSubscriptionId,
       status: args.status,
       currentPeriodEnd: args.currentPeriodEnd,
       priceId: args.priceId,
       updatedAt: now,
-    });
+    };
+    if (args.plan !== undefined) patch.plan = args.plan;
+    await ctx.db.patch(existing._id, patch);
     return existing._id;
   },
 });

@@ -33,6 +33,9 @@ export default defineSchema({
     // Stripe subscription status (active, trialing, past_due, canceled, unpaid, etc.)
     status: v.string(),
 
+    // Product plan (e.g. "proxy"); set when subscription becomes active
+    plan: v.optional(v.string()),
+
     // Subscription details
     currentPeriodEnd: v.optional(v.number()),
     priceId: v.optional(v.string()),
@@ -44,4 +47,23 @@ export default defineSchema({
     .index('by_email', ['email'])
     .index('by_stripe_customer_id', ['stripeCustomerId'])
     .index('by_stripe_subscription_id', ['stripeSubscriptionId']),
+
+  /** Per-user weighted token usage for AI (monthly period). */
+  usage: defineTable({
+    workosId: v.string(),
+    usagePeriodStart: v.number(),
+    weightedTokensUsed: v.number(),
+    weightedTokenLimit: v.number(),
+    inputTokensUsed: v.optional(v.number()),
+    outputTokensUsed: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index('by_workos_id', ['workosId']),
+
+  /** Per-user custom chat states (presets), synced across desktop + web. */
+  userStates: defineTable({
+    workosId: v.string(),
+    states: v.any(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index('by_workos_id', ['workosId']),
 });

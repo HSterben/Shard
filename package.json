@@ -1,17 +1,21 @@
 {
-  "name": "shard",
+  "name": "proxy-x",
   "version": "1.0.0",
-  "description": "AI-powered application monorepo",
+  "description": "PROXY X - AI-powered application monorepo",
   "license": "UNLICENSED",
   "private": true,
   "author": "Sterben",
   "scripts": {
-    "dev": "concurrently \"npm run dev --prefix backend\" \"npm run start --prefix electron\"",
+    "dev": "concurrently \"npm run dev --prefix backend\" \"npm run start --prefix desktop\"",
     "dev:backend": "npm run dev --prefix backend",
-    "dev:electron": "npm run start --prefix electron",
-    "build": "npm run build --prefix backend && npm run package --prefix electron",
+    "dev:electron": "npm run start --prefix desktop",
+    "dev:desktop": "npm run start --prefix desktop",
+    "dev:web": "npm run dev --prefix web",
+    "build": "npm run package --prefix desktop",
     "build:backend": "npm run build --prefix backend",
-    "build:electron": "npm run package --prefix electron"
+    "build:electron": "npm run package --prefix desktop",
+    "build:desktop": "npm run package --prefix desktop",
+    "build:web": "npm run build --prefix web"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
