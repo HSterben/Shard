@@ -1,0 +1,27 @@
+# Normalize text files to LF in the repo; checkout as-is on Windows without noisy conversions.
+* text=auto eol=lf
+
+# Generated Convex bindings — always LF
+backend/convex/_generated/** text eol=lf
+
+# Explicit binary types
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.svg text eol=lf
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.exe binary
+*.dll binary
+*.asar binary
+*.zip binary
+*.gz binary
+
+# Lockfiles
+package-lock.json text eol=lf
+**/package-lock.json text eol=lf
