@@ -8,11 +8,18 @@
  * @module
  */
 
+import type * as account from "../account.js";
+import type * as ai_model from "../ai/model.js";
+import type * as ai_provider from "../ai/provider.js";
 import type * as auth from "../auth.js";
+import type * as billing from "../billing.js";
 import type * as http from "../http.js";
 import type * as openrouter from "../openrouter.js";
 import type * as openrouterModel from "../openrouterModel.js";
+import type * as plans from "../plans.js";
+import type * as states from "../states.js";
 import type * as subscriptions from "../subscriptions.js";
+import type * as usage from "../usage.js";
 import type * as users from "../users.js";
 
 import type {
@@ -22,11 +29,18 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  account: typeof account;
+  "ai/model": typeof ai_model;
+  "ai/provider": typeof ai_provider;
   auth: typeof auth;
+  billing: typeof billing;
   http: typeof http;
   openrouter: typeof openrouter;
   openrouterModel: typeof openrouterModel;
+  plans: typeof plans;
+  states: typeof states;
   subscriptions: typeof subscriptions;
+  usage: typeof usage;
   users: typeof users;
 }>;
 
