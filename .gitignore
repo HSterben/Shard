@@ -399,3 +399,25 @@ patches/mtime-cache.json
 .depshash
 
 API_DOCUMENTATION.md
+
+# Hold mobile until desktop/web has subscriptions - do not push
+mobile/
+
+# Design tokens / scratch (local-only for now)
+design-system/
+
+# ============================================
+# Local agent notes / generated graphs
+# ============================================
+.agent-local/
+.ai-scratch/
+.local-ai/
+AGENTS.local.md
+CLAUDE.local.md
+GEMINI.local.md
+*.local-plan.md
+*.local-handoff.md
+
+# Graphify AST cache (regenerated locally)
+**/graphify-out/
+
