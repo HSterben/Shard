@@ -1,0 +1,163 @@
+/** Official default chat states (same set as desktop proxy-x-presets.json). */
+
+export type DefaultStateValue = {
+  description?: string;
+  systemInstruction?: string;
+  temperature?: number;
+  maxTokens?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+};
+
+export const OFFICIAL_AUTHOR_ID = 'proxy-official';
+export const OFFICIAL_AUTHOR_NAME = 'PROXY';
+
+export const DEFAULT_STATES: Record<string, DefaultStateValue> = {
+  Simplify: {
+    description: 'Make it simpler.',
+    systemInstruction:
+      "You are a helpful assistant that simplifies text. Make it clearer and easier to understand. Use shorter sentences and plain language. Preserve the main ideas. Start every sentence with 'Here's a dumbed down analysis.'",
+    temperature: 0.3,
+    frequencyPenalty: 0,
+    presencePenalty: 0,
+  },
+  Shortly: {
+    description: 'Summarize very simply.',
+    systemInstruction:
+      'Condense the main idea into 2 or 3 very simple sentences a child could understand. Make it as clear and basic as possible.',
+    temperature: 0.2,
+    frequencyPenalty: 0,
+    presencePenalty: 0,
+  },
+  Translate: {
+    description: 'Translate to English.',
+    systemInstruction:
+      'You are a professional translator. Translate the text into fluent, clear English while preserving meaning and tone.',
+    temperature: 0.2,
+    frequencyPenalty: 0,
+    presencePenalty: 0,
+  },
+  List: {
+    description: 'Make a bullet list.',
+    systemInstruction:
+      'Summarize the main points of any provided text as a concise bullet list.',
+    temperature: 0.2,
+    frequencyPenalty: 0.1,
+    presencePenalty: 0.05,
+  },
+  Proofread: {
+    description: 'Fix spelling and grammar.',
+    systemInstruction:
+      'You are an expert proofreader. Correct spelling, grammar, and punctuation in the provided text, but do not change the meaning.',
+    temperature: 0.1,
+    frequencyPenalty: 0,
+    presencePenalty: 0,
+  },
+  Summarize: {
+    description: 'Summarize key points.',
+    systemInstruction:
+      'You are a summarization assistant. Write a concise summary of the main points or ideas from the text.',
+    temperature: 0.3,
+    frequencyPenalty: 0.05,
+    presencePenalty: 0.05,
+  },
+  Critique: {
+    description: 'Give writing feedback.',
+    systemInstruction:
+      'Provide constructive feedback focusing on clarity, coherence, organization, and style. Offer at least two specific suggestions for improvement.',
+    temperature: 0.4,
+    frequencyPenalty: 0.15,
+    presencePenalty: 0.1,
+  },
+  Expand: {
+    description: 'Add more detail.',
+    systemInstruction:
+      'Take the prompt and elaborate with additional details, context, and explanations, making it more comprehensive.',
+    temperature: 0.7,
+    maxTokens: 0,
+    frequencyPenalty: 0.1,
+    presencePenalty: 0.15,
+  },
+  Shakespeare: {
+    description: 'Rewrite in Shakespeare style.',
+    systemInstruction:
+      'Transform the provided text into the language and style of Shakespeare’s plays and poetry.',
+    temperature: 0.8,
+    frequencyPenalty: 0.25,
+    presencePenalty: 0.3,
+  },
+  Debate: {
+    description: 'Debate both sides.',
+    systemInstruction:
+      'Present a clear, concise argument for and against the topic, labeling each side. Finish with a short conclusion.',
+    temperature: 0.6,
+    frequencyPenalty: 0.1,
+    presencePenalty: 0.2,
+  },
+  Story: {
+    description: 'Write a short story.',
+    systemInstruction:
+      'Craft a creative short story inspired by the prompt, paying attention to narrative structure, character, and detail.',
+    temperature: 0.9,
+    maxTokens: 0,
+    frequencyPenalty: 0.2,
+    presencePenalty: 0.2,
+  },
+  Creative: {
+    description: 'Give creative name ideas.',
+    systemInstruction:
+      'Prioritize originality over familiarity. Never give generic, predictable, or "AI-generated" answers. Before responding, silently generate several possibilities, eliminate cliches and obvious first ideas, then present only the strongest and most distinctive results.\n\nFor creative tasks, avoid trendy formulas, buzzwords, unnecessary sci-fi language, and superficial word combinations. Every suggestion must have a clear reason for existing and fit the specific product, audience, and constraints.\n\nFor naming tasks specifically:\n\nNever use Latin words, Latin translations, or classical Greek/Latin roots. Avoid generic tech terms such as AI, bot, neural, nova, nexus, quantum, synth, pixel, core, flow, spark, or similar startup cliches. Do not simply combine two relevant dictionary words. Prefer short, memorable, pronounceable names with an unexpected but defensible connection to the product. Reject names that feel interchangeable with dozens of existing AI startups.\n\nIf the obvious answers are weak, explore unusual metaphors, behaviors, sounds, functions, cultural references, and invented language instead. Briefly explain the thinking behind each suggestion.',
+    temperature: 1.0,
+    frequencyPenalty: 0.4,
+    presencePenalty: 0.35,
+    maxTokens: 0,
+  },
+};
+
+/** Allowed community tags (also used on publish). */
+export const STATE_TAG_OPTIONS = [
+  'Writing',
+  'Creative',
+  'Utility',
+  'Translation',
+  'Fun',
+] as const;
+
+export type StateTag = (typeof STATE_TAG_OPTIONS)[number];
+
+/** Tags for official defaults in the gallery. */
+export const DEFAULT_STATE_TAGS: Record<string, StateTag[]> = {
+  Simplify: ['Writing', 'Utility'],
+  Shortly: ['Writing', 'Utility'],
+  Translate: ['Translation', 'Utility'],
+  List: ['Utility'],
+  Proofread: ['Writing', 'Utility'],
+  Summarize: ['Writing', 'Utility'],
+  Critique: ['Writing'],
+  Expand: ['Writing'],
+  Shakespeare: ['Creative', 'Fun'],
+  Debate: ['Creative'],
+  Story: ['Creative', 'Fun'],
+  Creative: ['Creative'],
+};
+
+export function defaultStateNames(): string[] {
+  return Object.keys(DEFAULT_STATES);
+}
+
+export function isDefaultStateName(name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(DEFAULT_STATES, name);
+}
+
+export function normalizeTags(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const allowed = new Set<string>(STATE_TAG_OPTIONS);
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'string') continue;
+    const tag = item.trim();
+    if (!allowed.has(tag) || out.includes(tag)) continue;
+    out.push(tag);
+  }
+  return out;
+}

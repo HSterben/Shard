@@ -1,0 +1,277 @@
+@import './theme.css';
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  font-family: var(--font-ui);
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+/* Outer shortcut window */
+.bubble-window {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  -webkit-app-region: no-drag;
+}
+
+.bubble-titlebar {
+  height: 40px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 0 14px;
+  border-bottom: 1px solid var(--color-border);
+  -webkit-app-region: drag;
+}
+
+.bubble-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-accent-primary);
+  -webkit-app-region: no-drag;
+}
+
+.bubble-brand-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  letter-spacing: -0.02em;
+}
+
+.bubble-controls {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.bubble-titlebar > .bubble-controls {
+  height: 100%;
+  align-self: stretch;
+}
+
+.bubble-control-btn {
+  width: 40px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  border-radius: 0;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.bubble-control-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.bubble-control-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+/* Nested input card */
+.bubble-input-box {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin: 8px 12px 10px;
+  padding: 10px 12px 9px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  -webkit-app-region: no-drag;
+}
+
+.bubble-textarea {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 0;
+  caret-color: var(--color-accent-primary);
+}
+
+.bubble-textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+.bubble-textarea:focus {
+  outline: none;
+}
+
+.bubble-input-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  min-height: 36px;
+  flex-shrink: 0;
+}
+
+.bubble-state-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* State pill */
+.bubble-state-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px 0 8px;
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-border-accent);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border-accent);
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.bubble-state-pill:hover {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+.bubble-state-icon {
+  color: var(--color-accent-primary);
+  flex-shrink: 0;
+}
+
+.bubble-state-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-accent-primary);
+  pointer-events: none;
+}
+
+.bubble-state-chevron {
+  color: var(--color-accent-primary);
+  opacity: 0.7;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+.bubble-state-options {
+  position: absolute;
+  z-index: 10;
+  bottom: calc(100% + 7px);
+  left: 0;
+  min-width: 152px;
+  max-width: 220px;
+  max-height: 128px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  transform: translateY(6px);
+}
+
+.bubble-state-option {
+  width: 100%;
+  min-height: 30px;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0 9px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.bubble-state-option:hover,
+.bubble-state-option.is-active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-primary);
+}
+
+.bubble-attach-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-accent-primary);
+  background: var(--color-accent-soft);
+  padding: 4px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.bubble-send {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-accent-primary);
+  color: var(--color-on-accent);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 150ms ease, opacity 150ms ease;
+}
+
+.bubble-send:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.bubble-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.bubble-send svg {
+  width: 18px;
+  height: 18px;
+}
+
+[data-theme='light'] .bubble-window {
+  box-shadow: var(--shadow-md);
+}
+
+[data-theme='light'] .bubble-input-box {
+  background: var(--color-bg-secondary);
+}
