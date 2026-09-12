@@ -41,7 +41,7 @@ const MODEL =
   'arcee-ai/trinity-large-preview:free';
 const SYSTEM =
   process.env.TEST_SYSTEM ||
-  'You are PROXY X, an expert AI assistant. Be concise and helpful. Always provide clear, accurate information and assist the user to the best of your ability.';
+  'You are PROXY, an expert AI assistant. Be concise and helpful. Always provide clear, accurate information and assist the user to the best of your ability.';
 const USER_PROMPT =
   process.env.TEST_PROMPT ||
   'Explain the difference between regex and context-free grammar';
@@ -70,8 +70,8 @@ async function main() {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${key}`,
-      'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://proxy-x.app',
-      'X-Title': 'PROXY X OpenRouter test',
+      'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://proxy.app',
+      'X-Title': 'PROXY OpenRouter test',
     },
     body: JSON.stringify({
       model: MODEL,

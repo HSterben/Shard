@@ -2,7 +2,7 @@
 export const PLANS = {
   proxy: {
     id: 'proxy',
-    label: 'PROXY X',
+    label: 'PROXY',
     weightedTokenLimit: 10_000_000,
   },
 } as const;

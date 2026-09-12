@@ -34,6 +34,12 @@ export default defineConfig(({ mode }) => {
           presets: path.resolve(__dirname, 'presets.html'),
           subscription: path.resolve(__dirname, 'subscription.html'),
         },
+        output: {
+          // Keep Convex in one chunk to avoid Rollup circular re-export warnings
+          manualChunks(id) {
+            if (id.includes('node_modules/convex')) return 'convex';
+          },
+        },
       },
     },
   };

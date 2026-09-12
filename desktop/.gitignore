@@ -1,0 +1,8 @@
+# Local agent notes / scratch (desktop-scoped)
+.agent-local/
+
+# Build caches (also covered by repo root .gitignore)
+.vite/
+out/
+dist/
+node_modules/

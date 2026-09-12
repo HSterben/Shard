@@ -16,6 +16,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import started from "electron-squirrel-startup";
 import Store from "electron-store";
+import { updateElectronApp, UpdateSourceType, makeUserNotifier } from "update-electron-app";
 
 // Forge builds main into desktop/.vite/build; source lives in desktop/src.
 function resolveDesktopRoot() {
@@ -73,17 +74,19 @@ if (started) {
 
 // Initialize secure store for auth tokens
 const store = new Store({
-  name: "proxy-x-auth",
-  encryptionKey: "proxy-x-secure-storage-key-2024",
+  name: "proxy-auth",
+  encryptionKey: "proxy-secure-storage-key-2024",
 });
 
 // App config (no encryption) for presets and window settings
-const configStore = new Store({ name: "proxy-x-config" });
+const configStore = new Store({ name: "proxy-config" });
 const PRESETS_PATH_KEY = "presetsPath";
 const KEYBIND_KEY = "keybind";
 const WINDOW_SIZE_KEY = "windowSize";
 const WINDOW_POSITION_KEY = "windowPosition";
 const THEME_KEY = "theme";
+const MAX_CONTEXT_TOKENS_KEY = "maxContextTokens";
+const DEFAULT_MAX_CONTEXT_TOKENS = 12000;
 
 const SIZE_PRESETS = {
   XSmall: 0.08,
@@ -123,10 +126,10 @@ nativeTheme.on("updated", () => {
 });
 
 function getDefaultPresetsPath() {
-  return path.join(app.getPath("userData"), "proxy-x-presets.json");
+  return path.join(app.getPath("userData"), "proxy-presets.json");
 }
 
-// Icon path: dev = app path/src/icon; packaged = resources/icon (from extraResource)
+// Window icon: backend public asset (also copied via forge extraResource when packaged)
 function getIconPath() {
   if (app.isPackaged) {
     return path.join(process.resourcesPath, "Proxy-Icon-Light.ico");
@@ -139,7 +142,7 @@ function getPresetsPathsToTry() {
   if (custom) return [custom];
   const primary = getDefaultPresetsPath();
   if (process.platform === "win32") {
-    const roaming = path.join(process.env.APPDATA || "", "proxy-x", "proxy-x-presets.json");
+    const roaming = path.join(process.env.APPDATA || "", "proxy", "proxy-presets.json");
     if (roaming) return [roaming, primary];
   }
   return [primary];
@@ -147,11 +150,102 @@ function getPresetsPathsToTry() {
 
 const DEFAULT_PRESETS = {
   Simplify: {
-    description: "Simplify the following text.",
-    systemInstruction: "You are a helpful assistant that simplifies text. Use shorter sentences and plain language.",
+    description: "Make it simpler.",
+    systemInstruction:
+      "You are a helpful assistant that simplifies text. Make it clearer and easier to understand. Use shorter sentences and plain language. Preserve the main ideas. Start every sentence with 'Here's a dumbed down analysis.'",
     temperature: 0.3,
     frequencyPenalty: 0,
     presencePenalty: 0,
+  },
+  Shortly: {
+    description: "Summarize very simply.",
+    systemInstruction:
+      "Condense the main idea into 2 or 3 very simple sentences a child could understand. Make it as clear and basic as possible.",
+    temperature: 0.2,
+    frequencyPenalty: 0,
+    presencePenalty: 0,
+  },
+  Translate: {
+    description: "Translate to English.",
+    systemInstruction:
+      "You are a professional translator. Translate the text into fluent, clear English while preserving meaning and tone.",
+    temperature: 0.2,
+    frequencyPenalty: 0,
+    presencePenalty: 0,
+  },
+  List: {
+    description: "Make a bullet list.",
+    systemInstruction: "Summarize the main points of any provided text as a concise bullet list.",
+    temperature: 0.2,
+    frequencyPenalty: 0.1,
+    presencePenalty: 0.05,
+  },
+  Proofread: {
+    description: "Fix spelling and grammar.",
+    systemInstruction:
+      "You are an expert proofreader. Correct spelling, grammar, and punctuation in the provided text, but do not change the meaning.",
+    temperature: 0.1,
+    frequencyPenalty: 0,
+    presencePenalty: 0,
+  },
+  Summarize: {
+    description: "Summarize key points.",
+    systemInstruction:
+      "You are a summarization assistant. Write a concise summary of the main points or ideas from the text.",
+    temperature: 0.3,
+    frequencyPenalty: 0.05,
+    presencePenalty: 0.05,
+  },
+  Critique: {
+    description: "Give writing feedback.",
+    systemInstruction:
+      "Provide constructive feedback focusing on clarity, coherence, organization, and style. Offer at least two specific suggestions for improvement.",
+    temperature: 0.4,
+    frequencyPenalty: 0.15,
+    presencePenalty: 0.1,
+  },
+  Expand: {
+    description: "Add more detail.",
+    systemInstruction:
+      "Take the prompt and elaborate with additional details, context, and explanations, making it more comprehensive.",
+    temperature: 0.7,
+    maxTokens: 0,
+    frequencyPenalty: 0.1,
+    presencePenalty: 0.15,
+  },
+  Shakespeare: {
+    description: "Rewrite in Shakespeare style.",
+    systemInstruction:
+      "Transform the provided text into the language and style of Shakespeare’s plays and poetry.",
+    temperature: 0.8,
+    frequencyPenalty: 0.25,
+    presencePenalty: 0.3,
+  },
+  Debate: {
+    description: "Debate both sides.",
+    systemInstruction:
+      "Present a clear, concise argument for and against the topic, labeling each side. Finish with a short conclusion.",
+    temperature: 0.6,
+    frequencyPenalty: 0.1,
+    presencePenalty: 0.2,
+  },
+  Story: {
+    description: "Write a short story.",
+    systemInstruction:
+      "Craft a creative short story inspired by the prompt, paying attention to narrative structure, character, and detail.",
+    temperature: 0.9,
+    maxTokens: 0,
+    frequencyPenalty: 0.2,
+    presencePenalty: 0.2,
+  },
+  Creative: {
+    description: "Give creative name ideas.",
+    systemInstruction:
+      'Prioritize originality over familiarity. Never give generic, predictable, or "AI-generated" answers. Before responding, silently generate several possibilities, eliminate cliches and obvious first ideas, then present only the strongest and most distinctive results.\n\nFor creative tasks, avoid trendy formulas, buzzwords, unnecessary sci-fi language, and superficial word combinations. Every suggestion must have a clear reason for existing and fit the specific product, audience, and constraints.\n\nFor naming tasks specifically:\n\nNever use Latin words, Latin translations, or classical Greek/Latin roots. Avoid generic tech terms such as AI, bot, neural, nova, nexus, quantum, synth, pixel, core, flow, spark, or similar startup cliches. Do not simply combine two relevant dictionary words. Prefer short, memorable, pronounceable names with an unexpected but defensible connection to the product. Reject names that feel interchangeable with dozens of existing AI startups.\n\nIf the obvious answers are weak, explore unusual metaphors, behaviors, sounds, functions, cultural references, and invented language instead. Briefly explain the thinking behind each suggestion.',
+    temperature: 1.0,
+    frequencyPenalty: 0.4,
+    presencePenalty: 0.35,
+    maxTokens: 0,
   },
 };
 
@@ -259,16 +353,26 @@ let mainWindow = null;
 let tray = null;
 let isToggling = false; // Prevent double-toggle
 
-// Register custom protocol for OAuth callback
-if (process.defaultApp) {
-  if (process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient("proxy-x", process.execPath, [
-      path.resolve(process.argv[1]),
-    ]);
-  }
-} else {
-  app.setAsDefaultProtocolClient("proxy-x");
+const AUTH_PROTOCOL = "proxy";
+
+function isAuthProtocolUrl(arg) {
+  return typeof arg === "string" && arg.startsWith(`${AUTH_PROTOCOL}://`);
 }
+
+function registerAuthProtocol() {
+  if (process.defaultApp) {
+    if (process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient(AUTH_PROTOCOL, process.execPath, [
+        path.resolve(process.argv[1]),
+      ]);
+    }
+  } else {
+    app.setAsDefaultProtocolClient(AUTH_PROTOCOL);
+  }
+}
+
+// Register custom protocol for OAuth callback
+registerAuthProtocol();
 
 // Handle deep link on Windows/Linux (single instance)
 const gotTheLock = app.requestSingleInstanceLock();
@@ -279,9 +383,9 @@ if (!gotTheLock) {
   app.on("second-instance", (event, commandLine) => {
     console.log("Second instance detected, commandLine:", commandLine);
     // Someone tried to run a second instance, handle the deep link
-    const url = commandLine.find((arg) => arg.startsWith("proxy-x://"));
+    const url = commandLine.find((arg) => isAuthProtocolUrl(arg));
     if (url) {
-      console.log("Found proxy-x:// URL in second instance:", url);
+      console.log("Found auth protocol URL in second instance:", url);
       handleAuthCallback(url);
     }
 
@@ -304,7 +408,7 @@ function handleAuthCallback(url) {
   console.log("Handling auth callback URL:", url);
   try {
     const parsedUrl = new URL(url);
-    // For proxy-x://auth/success, hostname="auth", pathname="/success"
+    // For proxy://auth/success, hostname="auth", pathname="/success"
     // Combine them to get the full path
     const fullPath = parsedUrl.hostname + parsedUrl.pathname;
     console.log("Parsed path:", fullPath);
@@ -342,13 +446,13 @@ function handleAuthCallback(url) {
   }
 }
 
-// Fade animation functions
+// Fade animation functions — fewer steps for snappier show/hide
 const fadeIn = (window, callback) => {
   if (!window) return;
   window.setOpacity(0);
   let opacity = 0;
   const fadeInterval = setInterval(() => {
-    opacity += 0.1;
+    opacity += 0.2;
     if (opacity >= 1) {
       clearInterval(fadeInterval);
       window.setOpacity(1);
@@ -356,14 +460,14 @@ const fadeIn = (window, callback) => {
     } else {
       window.setOpacity(opacity);
     }
-  }, 16); // ~60fps
+  }, 16);
 };
 
 const fadeOut = (window, callback) => {
   if (!window) return;
   let opacity = window.getOpacity();
   const fadeInterval = setInterval(() => {
-    opacity -= 0.1;
+    opacity -= 0.2;
     if (opacity <= 0) {
       clearInterval(fadeInterval);
       window.setOpacity(0);
@@ -371,7 +475,7 @@ const fadeOut = (window, callback) => {
     } else {
       window.setOpacity(opacity);
     }
-  }, 16); // ~60fps
+  }, 16);
 };
 
 function getWindowSizePreset() {
@@ -415,7 +519,7 @@ const createWindow = () => {
   const { width, height } = calculateWindowSize(workArea.width);
   const { x, y } = getWindowPositionXY(workArea, width, height);
 
-  const windowIcon = getIconPath(process.platform === "win32" ? "crystal.ico" : "crystal.png");
+  const windowIcon = getIconPath();
   mainWindow = new BrowserWindow({
     width,
     height,
@@ -429,7 +533,6 @@ const createWindow = () => {
     icon: windowIcon,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
-      backgroundThrottling: false,
     },
   });
 
@@ -499,7 +602,7 @@ const toggleWindow = () => {
 };
 
 const createTray = () => {
-  const iconPath = getIconPath("crystal.png");
+  const iconPath = getIconPath();
   let icon;
   try {
     icon = nativeImage.createFromPath(iconPath);
@@ -554,7 +657,7 @@ const createTray = () => {
     },
   ]);
 
-  tray.setToolTip("PROXY X");
+  tray.setToolTip("PROXY");
   tray.setContextMenu(contextMenu);
 
   // Also allow clicking the tray icon to toggle window
@@ -576,19 +679,91 @@ function registerKeybind() {
 let settingsWindow = null;
 let presetsWindow = null;
 let subscriptionWindow = null;
+let chatWindow = null;
+
+function showChatWindow(message) {
+  const payload = { message: String(message || "") };
+
+  if (chatWindow && !chatWindow.isDestroyed()) {
+    chatWindow.webContents.send("chat-start", payload);
+    if (!chatWindow.isVisible()) {
+      chatWindow.setOpacity(0);
+      chatWindow.show();
+      fadeIn(chatWindow);
+    }
+    chatWindow.focus();
+    return;
+  }
+
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } =
+    primaryDisplay.workAreaSize;
+  const windowIcon = getIconPath();
+
+  chatWindow = new BrowserWindow({
+    width: screenWidth / 2,
+    height: screenHeight * 0.6,
+    frame: false,
+    transparent: false,
+    backgroundColor: "#000000",
+    resizable: true,
+    alwaysOnTop: false,
+    skipTaskbar: false,
+    show: false,
+    icon: windowIcon,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+
+  chatWindow.on("close", (event) => {
+    if (!app.isQuitting) {
+      event.preventDefault();
+      fadeOut(chatWindow, () => {
+        if (chatWindow && !chatWindow.isDestroyed()) chatWindow.hide();
+      });
+    }
+  });
+
+  chatWindow.on("closed", () => {
+    chatWindow = null;
+  });
+
+  const encodedMessage = encodeURIComponent(JSON.stringify(payload));
+  const onReady = () => {
+    chatWindow.show();
+    chatWindow.focus();
+  };
+
+  if (MESSAGE_WINDOW_VITE_DEV_SERVER_URL || MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    const devServerUrl =
+      MESSAGE_WINDOW_VITE_DEV_SERVER_URL || MAIN_WINDOW_VITE_DEV_SERVER_URL;
+    chatWindow.loadURL(`${devServerUrl}/chat.html?data=${encodedMessage}`);
+  } else {
+    const filePath = path.join(
+      __dirname,
+      `../renderer/${MESSAGE_WINDOW_VITE_NAME}/chat.html`
+    );
+    chatWindow.loadFile(filePath, { query: { data: encodedMessage } });
+  }
+
+  chatWindow.once("ready-to-show", onReady);
+}
 
 function createSettingsWindow() {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.focus();
     return;
   }
-  const windowIcon = getIconPath(process.platform === "win32" ? "crystal.ico" : "crystal.png");
+  const windowIcon = getIconPath();
   settingsWindow = new BrowserWindow({
     width: 760,
     height: 620,
     show: false,
     frame: false,
-    title: "PROXY X Settings",
+    title: "PROXY Settings",
     backgroundColor: "#000000",
     icon: windowIcon,
     webPreferences: {
@@ -614,13 +789,13 @@ function createSubscriptionWindow() {
     subscriptionWindow.focus();
     return;
   }
-  const windowIcon = getIconPath(process.platform === "win32" ? "crystal.ico" : "crystal.png");
+  const windowIcon = getIconPath();
   subscriptionWindow = new BrowserWindow({
     width: 480,
     height: 520,
     show: false,
     frame: false,
-    title: "PROXY X, Manage Subscription",
+    title: "PROXY, Manage Subscription",
     backgroundColor: "#000000",
     icon: windowIcon,
     webPreferences: {
@@ -646,13 +821,13 @@ function createPresetsWindow() {
     presetsWindow.focus();
     return;
   }
-  const windowIcon = getIconPath(process.platform === "win32" ? "crystal.ico" : "crystal.png");
+  const windowIcon = getIconPath();
   presetsWindow = new BrowserWindow({
     width: 880,
     height: 720,
     show: false,
     frame: false,
-    title: "PROXY X States",
+    title: "PROXY States",
     backgroundColor: "#000000",
     icon: windowIcon,
     webPreferences: {
@@ -674,6 +849,8 @@ function createPresetsWindow() {
 }
 
 ipcMain.handle("get-openrouter-model-name", async () => getOpenRouterModelNameFromEnv());
+
+ipcMain.handle("get-app-version", async () => app.getVersion());
 
 // Auth IPC Handlers
 ipcMain.handle("get-auth-token", async () => {
@@ -703,8 +880,9 @@ ipcMain.handle("get-auth-token", async () => {
 
 ipcMain.handle("open-login", async () => {
   // Open the login URL in the system default browser
+  console.log("[auth] Opening login:", AUTH_LOGIN_URL);
   shell.openExternal(AUTH_LOGIN_URL);
-  return { success: true };
+  return { success: true, url: AUTH_LOGIN_URL };
 });
 
 ipcMain.handle("open-external", async (_event, url) => {
@@ -723,6 +901,9 @@ ipcMain.handle("open-external", async (_event, url) => {
 ipcMain.handle("logout", async () => {
   store.delete("accessToken");
   store.delete("refreshToken");
+  BrowserWindow.getAllWindows().forEach((win) => {
+    win.webContents.send("auth-logout");
+  });
   return { success: true };
 });
 
@@ -779,9 +960,9 @@ ipcMain.handle("read-presets", async () => {
 
 function getBundledPresetsPath() {
   if (app.isPackaged) {
-    return path.join(process.resourcesPath, "proxy-x-presets.json");
+    return path.join(process.resourcesPath, "proxy-presets.json");
   }
-  return path.join(app.getAppPath(), "proxy-x-presets.json");
+  return path.join(app.getAppPath(), "proxy-presets.json");
 }
 
 ipcMain.handle("get-bundled-presets-path", async () => getBundledPresetsPath());
@@ -808,7 +989,7 @@ ipcMain.handle("export-presets", async () => {
         : null;
   const { canceled, filePath } = await dialog.showSaveDialog(parentWindow, {
     title: "Export states",
-    defaultPath: "proxy-x-presets.json",
+    defaultPath: "proxy-presets.json",
     filters: [{ name: "JSON", extensions: ["json"] }],
   });
   if (canceled || !filePath) return { success: false, canceled: true };
@@ -860,17 +1041,30 @@ function validatePresetsPayload(data) {
   return null;
 }
 
-ipcMain.handle("write-presets", async (_event, presets) => {
+ipcMain.handle("write-presets", async (_event, presets, options) => {
   const err = validatePresetsPayload(presets);
   if (err) return { success: false, error: err };
   const presetsPath = configStore.get(PRESETS_PATH_KEY) || getDefaultPresetsPath();
+  const broadcast = options?.broadcast !== false;
   try {
     await fsp.mkdir(path.dirname(presetsPath), { recursive: true });
-    await fsp.writeFile(presetsPath, JSON.stringify(presets, null, 2), "utf8");
-    BrowserWindow.getAllWindows().forEach((win) => {
-      win.webContents.send("presets-updated");
-    });
-    return { success: true, presets };
+    const nextBody = JSON.stringify(presets, null, 2);
+    let changed = true;
+    try {
+      const prev = await fsp.readFile(presetsPath, "utf8");
+      changed = prev !== nextBody;
+    } catch (_) {
+      // file missing — treat as changed
+    }
+    if (changed) {
+      await fsp.writeFile(presetsPath, nextBody, "utf8");
+    }
+    if (broadcast && changed) {
+      BrowserWindow.getAllWindows().forEach((win) => {
+        win.webContents.send("presets-updated");
+      });
+    }
+    return { success: true, presets, changed };
   } catch (e) {
     return { success: false, error: e.message };
   }
@@ -883,6 +1077,28 @@ ipcMain.handle("set-keybind", async (_e, accel) => {
   configStore.set(KEYBIND_KEY, accel.trim());
   registerKeybind();
   return { success: true };
+});
+
+function clampMaxContextTokensValue(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_MAX_CONTEXT_TOKENS;
+  return Math.min(200000, Math.max(2048, Math.floor(n)));
+}
+
+ipcMain.handle("get-max-context-tokens", async () => {
+  const stored = configStore.get(MAX_CONTEXT_TOKENS_KEY);
+  return clampMaxContextTokensValue(stored ?? DEFAULT_MAX_CONTEXT_TOKENS);
+});
+
+ipcMain.handle("set-max-context-tokens", async (_e, value) => {
+  const next = clampMaxContextTokensValue(value);
+  configStore.set(MAX_CONTEXT_TOKENS_KEY, next);
+  BrowserWindow.getAllWindows().forEach((win) => {
+    if (!win.isDestroyed()) {
+      win.webContents.send("max-context-tokens-changed", next);
+    }
+  });
+  return { success: true, value: next };
 });
 
 ipcMain.handle("get-window-size", async () => getWindowSizePreset());
@@ -986,61 +1202,14 @@ ipcMain.handle("open-subscription-window", async () => {
 
 // Existing IPC Handlers
 ipcMain.handle("send-message", async (event, message) => {
-  // Hide the chat window
+  // Hide the bubble window
   if (mainWindow && mainWindow.isVisible()) {
     fadeOut(mainWindow, () => {
       mainWindow.hide();
     });
   }
 
-  //* Create message display window
-
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width: screenWidth, height: screenHeight } =
-    primaryDisplay.workAreaSize;
-
-  const windowIcon = getIconPath(process.platform === "win32" ? "crystal.ico" : "crystal.png");
-  const messageWindow = new BrowserWindow({
-    width: screenWidth / 2,
-    height: screenHeight * 0.6,
-    frame: false,
-    transparent: false,
-    backgroundColor: "#000000",
-    resizable: true,
-    alwaysOnTop: false,
-    skipTaskbar: false,
-    show: false,
-    icon: windowIcon,
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-  });
-
-  // Encode message to pass as query parameter
-  const encodedMessage = encodeURIComponent(JSON.stringify({ message }));
-
-  // Load the message page HTML file with message as query parameter
-  if (MESSAGE_WINDOW_VITE_DEV_SERVER_URL || MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    const devServerUrl =
-      MESSAGE_WINDOW_VITE_DEV_SERVER_URL || MAIN_WINDOW_VITE_DEV_SERVER_URL;
-    const url = `${devServerUrl}/chat.html?data=${encodedMessage}`;
-    messageWindow.loadURL(url);
-  } else {
-    const filePath = path.join(
-      __dirname,
-      `../renderer/${MESSAGE_WINDOW_VITE_NAME}/chat.html`
-    );
-    messageWindow.loadFile(filePath, { query: { data: encodedMessage } });
-  }
-
-  // Show window when ready
-  messageWindow.once("ready-to-show", () => {
-    messageWindow.show();
-    messageWindow.focus();
-  });
-
+  showChatWindow(message);
   return { success: true };
 });
 
@@ -1056,9 +1225,15 @@ ipcMain.handle("hide-window", async () => {
 ipcMain.handle("close-message-window", async (event) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (window) {
-    fadeOut(window, () => {
-      window.close();
-    });
+    if (chatWindow && window.id === chatWindow.id && !app.isQuitting) {
+      fadeOut(window, () => {
+        if (!window.isDestroyed()) window.hide();
+      });
+    } else {
+      fadeOut(window, () => {
+        if (!window.isDestroyed()) window.close();
+      });
+    }
   }
   return { success: true };
 });
@@ -1072,9 +1247,34 @@ app.whenReady().then(() => {
 
   registerKeybind();
 
+  // Auto-update from GitHub Releases (packaged builds only).
+  // Requires a public repo + `npm run publish` / `publish:win` with GITHUB_TOKEN.
+  if (app.isPackaged) {
+    try {
+      updateElectronApp({
+        updateSource: {
+          type: UpdateSourceType.ElectronPublicUpdateService,
+          repo: "HSterben/Proxy",
+        },
+        updateInterval: "1 hour",
+        notifyUser: true,
+        onNotifyUser: makeUserNotifier({
+          title: "PROXY update available",
+          detail:
+            "A new version of PROXY has been downloaded.\n\nRestart now to install it, or choose Later to keep working.",
+          restartButtonText: "Restart now",
+          laterButtonText: "Later",
+        }),
+        logger: console,
+      });
+    } catch (err) {
+      console.warn("[update] Failed to start auto-updater:", err);
+    }
+  }
+
   // Handle deep link URL passed on initial launch (Windows/Linux)
   // This happens when the app wasn't running and user clicks the protocol link
-  const protocolUrl = process.argv.find((arg) => arg.startsWith("proxy-x://"));
+  const protocolUrl = process.argv.find((arg) => isAuthProtocolUrl(arg));
   if (protocolUrl) {
     console.log("Found protocol URL in argv:", protocolUrl);
     // Delay slightly to ensure windows are ready
@@ -1101,9 +1301,9 @@ app.on("window-all-closed", () => {
 // Unregister all shortcuts when app quits
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
-  // Close message window if it exists
-  if (messageWindow) {
-    messageWindow.close();
-    messageWindow = null;
+  app.isQuitting = true;
+  if (chatWindow && !chatWindow.isDestroyed()) {
+    chatWindow.destroy();
+    chatWindow = null;
   }
 });

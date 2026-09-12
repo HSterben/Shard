@@ -6,11 +6,11 @@ const path = require('path');
 module.exports = {
   packagerConfig: {
     asar: true,
-    name: 'PROXY X',
-    executableName: 'PROXY-X',
+    name: 'PROXY',
+    executableName: 'proxy',
     icon: path.join(__dirname, '..', 'backend', 'public', 'Proxy-Icon-Light'), // .ico on Windows
     extraResource: [
-      path.join(__dirname, 'proxy-x-presets.json'),
+      path.join(__dirname, 'proxy-presets.json'),
       path.join(__dirname, '..', 'backend', 'public', 'Proxy-Icon-Light.ico'),
     ],
   },
@@ -19,7 +19,7 @@ module.exports = {
     {
       name: '@electron-forge/maker-squirrel',
       config: {
-        name: 'PROXY_X',
+        name: 'PROXY',
         ...(process.env.CERT_FILE && {
           certificateFile: process.env.CERT_FILE,
           certificatePassword: process.env.CERT_PASSWORD,
@@ -44,6 +44,20 @@ module.exports = {
       name: '@electron-forge/maker-rpm',
       config: {},
       platforms: ['linux'],
+    },
+  ],
+  publishers: [
+    {
+      name: '@electron-forge/publisher-github',
+      config: {
+        repository: {
+          owner: 'HSterben',
+          name: 'Proxy',
+        },
+        // update.electronjs.org ignores drafts and prereleases
+        prerelease: false,
+        draft: false,
+      },
     },
   ],
   plugins: [

@@ -18,7 +18,7 @@ function NavButton({ active, label, onClick, children }) {
   );
 }
 
-export default function AppShell({ active = 'chat', title = 'PROXY X', onClose, children }) {
+export default function AppShell({ active = 'chat', title = 'PROXY', onClose, children }) {
   const openChat = () => {
     if (active !== 'chat') api?.toggleBubble?.();
   };

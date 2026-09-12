@@ -18,6 +18,40 @@
   margin-bottom: 0;
 }
 
+.subscription-usage-block {
+  margin-top: 2px;
+}
+
+.subscription-usage-block .subscription-status-row {
+  margin-bottom: 8px;
+}
+
+.subscription-usage-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.subscription-usage-fill {
+  height: 100%;
+  border-radius: inherit;
+  transition: width 280ms ease;
+  min-width: 0;
+}
+
+.subscription-usage-fill-ok {
+  background: var(--color-accent-primary);
+}
+
+.subscription-usage-fill-warn {
+  background: #f59e0b;
+}
+
+.subscription-usage-fill-danger {
+  background: var(--color-danger);
+}
+
 .subscription-status-label {
   font-size: 13px;
   color: var(--color-text-secondary, #666);
@@ -42,8 +76,8 @@
 
 .subscription-badge.active,
 .subscription-badge.trialing {
-  background: rgba(0, 212, 255, 0.15);
-  color: var(--color-accent-primary, #00d4ff);
+  background: var(--color-success-soft, rgba(34, 197, 94, 0.15));
+  color: var(--color-success, #22c55e);
 }
 
 .subscription-badge.pending {
@@ -53,8 +87,8 @@
 
 .subscription-badge.past_due,
 .subscription-badge.unpaid {
-  background: rgba(255, 80, 80, 0.15);
-  color: #ff8080;
+  background: var(--color-danger-soft, rgba(239, 68, 68, 0.15));
+  color: var(--color-danger, #ef4444);
 }
 
 .subscription-badge.canceled,

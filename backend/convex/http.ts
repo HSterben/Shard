@@ -12,7 +12,63 @@ import {
 const http = httpRouter();
 
 function proxyWebsiteBase(): string {
-  return (process.env.PROXY_WEBSITE_URL || 'http://localhost:5173').replace(/\/$/, '');
+  return (process.env.PROXY_WEBSITE_URL || 'https://getproxy.ca').replace(/\/$/, '');
+}
+
+/** Never bounce OAuth back onto Convex itself (causes login↔callback loops). */
+function safeWebsiteBase(): string {
+  const base = proxyWebsiteBase();
+  if (/\.convex\.(site|cloud)(\/|$)/i.test(base)) {
+    return 'https://getproxy.ca';
+  }
+  return base;
+}
+
+function desktopAuthHtml(opts: {
+  title: string;
+  body: string;
+  deepLink?: string;
+  isError?: boolean;
+}) {
+  const deepLink = opts.deepLink
+    ? `<script>
+  try { window.location.href = ${JSON.stringify(opts.deepLink)}; } catch (e) {}
+  setTimeout(function () {
+    var el = document.getElementById('fallback');
+    if (el) el.style.display = 'block';
+  }, 800);
+</script>`
+    : '';
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>${opts.title}</title>
+  <style>
+    body{font-family:system-ui,-apple-system,sans-serif;max-width:28rem;margin:3rem auto;padding:0 1.25rem;color:#111;line-height:1.5}
+    h1{font-size:1.35rem;margin:0 0 .75rem}
+    p{margin:.5rem 0;color:#444}
+    .ok{color:#0a7a3e}
+    .err{color:#b00020}
+    #fallback{display:none;margin-top:1.25rem;padding:1rem;border:1px solid #ddd;border-radius:10px;background:#fafafa}
+    a.btn{display:inline-block;margin-top:.75rem;padding:.65rem 1rem;border-radius:8px;background:#111;color:#fff;text-decoration:none;font-weight:600}
+  </style>
+</head>
+<body>
+  <h1 class="${opts.isError ? 'err' : 'ok'}">${opts.title}</h1>
+  <p>${opts.body}</p>
+  ${deepLink}
+  <div id="fallback">
+    <p>If the PROXY app did not open automatically, return to the app and try Sign in again.</p>
+    ${
+      opts.deepLink
+        ? `<p><a class="btn" href="${opts.deepLink}">Open PROXY</a></p>`
+        : ''
+    }
+  </div>
+</body>
+</html>`;
 }
 
 async function syncEntitlementsForWorkos(
@@ -193,10 +249,13 @@ async function verifyStripeWebhookSignature(rawBody: string, signatureHeader: st
 // WORKOS_CLIENT_ID is public (safe to hardcode)
 // WORKOS_API_KEY must be set as a Convex environment variable (it's secret!)
 const WORKOS_CLIENT_ID = 'client_01KGNG7JGSBPA9HZWGVKZ8N8MS';
-const WORKOS_REDIRECT_URI = 'https://strong-poodle-712.convex.site/auth/callback';
+const WORKOS_REDIRECT_URI = (
+  process.env.WORKOS_REDIRECT_URI ||
+  'https://proficient-squid-85.convex.site/auth/callback'
+).replace(/\/$/, '');
 
 // Start OAuth flow - redirects to WorkOS
-// ?state=web → callback returns to PROXY_WEBSITE_URL (browser). Default → Electron (proxy-x://).
+// ?state=web → callback returns to PROXY_WEBSITE_URL (browser). Default → Electron (proxy://).
 http.route({
   path: '/auth/login',
   method: 'GET',
@@ -230,7 +289,17 @@ http.route({
     const error = url.searchParams.get('error');
     const state = url.searchParams.get('state') || 'desktop';
     const isWeb = state === 'web';
-    const webBase = proxyWebsiteBase();
+    const webBase = safeWebsiteBase();
+
+    // Ignore leftover redirects that already carried tokens/errors (prevents loops)
+    if (!code && !error && (url.searchParams.has('token') || url.searchParams.has('refresh'))) {
+      return htmlResponse(
+        desktopAuthHtml({
+          title: 'Already signed in',
+          body: 'You can close this tab and return to PROXY.',
+        })
+      );
+    }
 
     if (error) {
       if (isWeb) {
@@ -241,12 +310,15 @@ http.route({
           },
         });
       }
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: `proxy-x://auth/error?message=${encodeURIComponent(error)}`,
-        },
-      });
+      return htmlResponse(
+        desktopAuthHtml({
+          title: 'Sign-in failed',
+          body: `WorkOS returned an error: ${error}`,
+          deepLink: `proxy://auth/error?message=${encodeURIComponent(error)}`,
+          isError: true,
+        }),
+        400
+      );
     }
 
     if (!code) {
@@ -258,12 +330,16 @@ http.route({
           },
         });
       }
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: 'proxy-x://auth/error?message=No%20code%20provided',
-        },
-      });
+      // Do not 302 back to /auth/login — that creates the login↔callback loop
+      return htmlResponse(
+        desktopAuthHtml({
+          title: 'Sign-in incomplete',
+          body: 'No authorization code was returned. Close this tab, return to PROXY, and try Sign in again.',
+          deepLink: 'proxy://auth/error?message=No%20code%20provided',
+          isError: true,
+        }),
+        400
+      );
     }
 
     try {
@@ -296,12 +372,15 @@ http.route({
             },
           });
         }
-        return new Response(null, {
-          status: 302,
-          headers: {
-            Location: `proxy-x://auth/error?message=${encodeURIComponent('Authentication failed')}`,
-          },
-        });
+        return htmlResponse(
+          desktopAuthHtml({
+            title: 'Sign-in failed',
+            body: 'Could not exchange the login code for a session. Check WORKOS_API_KEY on this Convex deployment, then try again from the app.',
+            deepLink: `proxy://auth/error?message=${encodeURIComponent('Authentication failed')}`,
+            isError: true,
+          }),
+          400
+        );
       }
 
       const tokenData = await tokenResponse.json();
@@ -321,12 +400,15 @@ http.route({
         });
       }
 
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: `proxy-x://auth/success?token=${encodeURIComponent(tokenData.access_token)}&refresh=${encodeURIComponent(tokenData.refresh_token || '')}`,
-        },
-      });
+      // Prefer HTML + JS deep link over HTTP 302 to proxy:// (browsers often mishandle custom-protocol redirects → login loops)
+      const deepLink = `proxy://auth/success?token=${encodeURIComponent(tokenData.access_token)}&refresh=${encodeURIComponent(tokenData.refresh_token || '')}`;
+      return htmlResponse(
+        desktopAuthHtml({
+          title: 'Signed in',
+          body: 'Returning you to the PROXY app. You can close this tab.',
+          deepLink,
+        })
+      );
     } catch (err) {
       console.error('Auth callback error:', err);
       if (isWeb) {
@@ -337,12 +419,15 @@ http.route({
           },
         });
       }
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: 'proxy-x://auth/error?message=Authentication%20failed',
-        },
-      });
+      return htmlResponse(
+        desktopAuthHtml({
+          title: 'Sign-in failed',
+          body: 'An unexpected error occurred during sign-in. Close this tab and try again from PROXY.',
+          deepLink: 'proxy://auth/error?message=Authentication%20failed',
+          isError: true,
+        }),
+        500
+      );
     }
   }),
 });
@@ -1003,7 +1088,7 @@ http.route({
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PROXY X Subscription</title>
+    <title>PROXY Subscription</title>
     <style>
       body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
       .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; }
@@ -1015,7 +1100,7 @@ http.route({
     </style>
   </head>
   <body>
-    <h1>Subscribe to PROXY X</h1>
+    <h1>Subscribe to PROXY</h1>
     <p class="muted">Enter your email, pick a plan, and you’ll be redirected to Stripe Checkout.</p>
 
     <div class="card">
@@ -1240,7 +1325,7 @@ http.route({
   method: 'GET',
   handler: httpAction(async () => {
     return htmlResponse(
-      '<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Billing</title></head><body style="font-family:system-ui;max-width:720px;margin:40px auto;padding:0 16px;"><h1>Billing updated</h1><p>You can close this tab and return to PROXY X.</p></body></html>'
+      '<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Billing</title></head><body style="font-family:system-ui;max-width:720px;margin:40px auto;padding:0 16px;"><h1>Billing updated</h1><p>You can close this tab and return to PROXY.</p></body></html>'
     );
   }),
 });
@@ -1258,10 +1343,27 @@ http.route({
     }
 
     const workosId = identity.subject;
-    // WorkOS JWT may not include email depending on JWT template; fall back to users table (synced by webhook)
-    let email =
-      (identity as { email?: string }).email ??
-      (await ctx.runQuery(api.users.getUserByWorkosId, { workosId }))?.email;
+    let body: { priceId?: string; email?: string } = {};
+    try {
+      body = (await req.json()) as { priceId?: string; email?: string };
+    } catch {
+      body = {};
+    }
+
+    // WorkOS JWT may omit email; fall back to users table, then client-provided email.
+    const identityEmail =
+      (typeof identity.email === 'string' && identity.email.trim()) ||
+      (typeof (identity as { email_address?: string }).email_address === 'string' &&
+        (identity as { email_address?: string }).email_address!.trim()) ||
+      undefined;
+    const storedEmail = (await ctx.runQuery(api.users.getUserByWorkosId, { workosId }))
+      ?.email;
+    const clientEmail =
+      typeof body.email === 'string' && body.email.includes('@')
+        ? body.email.trim()
+        : undefined;
+
+    const email = identityEmail || storedEmail || clientEmail;
 
     if (!email) {
       return jsonResponse({ error: 'No email available for this account' }, 400, {
@@ -1269,8 +1371,17 @@ http.route({
       });
     }
 
+    // Persist email onto the user row when we only got it from the client/JWT
+    if (!storedEmail || storedEmail !== email) {
+      try {
+        await ctx.runMutation(api.users.setMyEmail, { email });
+      } catch (e) {
+        console.warn('Could not sync email to users table', e);
+      }
+    }
+
     try {
-      const { priceId } = (await req.json()) as { priceId?: string };
+      const priceId = body.priceId;
       if (!priceId) {
         return jsonResponse({ error: 'priceId is required' }, 400, {
           'Access-Control-Allow-Origin': '*',

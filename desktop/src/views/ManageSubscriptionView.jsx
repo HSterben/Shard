@@ -11,7 +11,7 @@ const api_ = typeof window !== "undefined" ? window.electronAPI : null;
 const CONVEX_URL = convexUrl;
 
 function formatDate(ms) {
-  if (!ms) return "—";
+  if (!ms) return "n/a";
   return new Date(ms).toLocaleDateString(undefined, {
     year: "numeric",
     month: "long",
@@ -20,7 +20,7 @@ function formatDate(ms) {
 }
 
 function formatQuota(used, limit) {
-  if (!limit) return "—";
+  if (!limit) return "n/a";
   const pct = Math.min(100, Math.round((used / limit) * 100));
   return `${pct}% used this period`;
 }
@@ -46,7 +46,7 @@ export default function ManageSubscriptionView() {
       setAccount(data);
     } catch (err) {
       console.error("Failed to load account:", err);
-      showMessage("Could not load account details.", true);
+      showMessage("Couldn’t load account details.", true);
     } finally {
       setLoading(false);
     }
@@ -77,7 +77,7 @@ export default function ManageSubscriptionView() {
     };
     init();
 
-    api_?.onAuthSuccess?.((data) => {
+    const unsubSuccess = api_?.onAuthSuccess?.((data) => {
       if (data.token) {
         setAuthToken(data.token);
         convex.current.setAuth(async () => data.token);
@@ -90,6 +90,20 @@ export default function ManageSubscriptionView() {
         setLoading(false);
       }
     });
+    const unsubLogout = api_?.onAuthLogout?.(() => {
+      setAuthToken(null);
+      try {
+        convex.current.clearAuth();
+      } catch (_) {
+        convex.current.setAuth(async () => null);
+      }
+      setIsAuthenticated(false);
+      setAccount(null);
+    });
+    return () => {
+      unsubSuccess?.();
+      unsubLogout?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -97,17 +111,26 @@ export default function ManageSubscriptionView() {
   }, [isAuthenticated, loadAccount]);
 
   const openWebsiteBilling = async () => {
-    const base = (account?.websiteUrl || "http://localhost:5173").replace(/\/$/, "");
+    const base = (account?.websiteUrl || "https://getproxy.ca").replace(/\/$/, "");
     await api_?.openExternal?.(`${base}/account/billing`);
   };
 
   const status = account?.status || "none";
   const badgeClass = status === "none" ? "canceled" : status.replace(/ /g, "_");
+  const usagePct =
+    account?.weightedTokenLimit > 0
+      ? Math.min(
+          100,
+          Math.round((account.weightedTokensUsed / account.weightedTokenLimit) * 100)
+        )
+      : 0;
+  const usageTone =
+    usagePct >= 90 ? "danger" : usagePct >= 70 ? "warn" : "ok";
 
   if (!api_) {
     return (
       <div className="settings-view">
-        <p style={{ padding: 24 }}>Account details are only available in the Electron app.</p>
+        <p style={{ padding: 24 }}>Open Account from the PROXY desktop app.</p>
       </div>
     );
   }
@@ -128,25 +151,25 @@ export default function ManageSubscriptionView() {
           </div>
         ) : !isAuthenticated ? (
           <div className="subscription-auth-prompt">
-            <h2>Sign in required</h2>
-            <p>Log in to see your PROXY X subscription and usage.</p>
-            <button type="button" className="settings-btn primary" onClick={() => api_?.openLogin?.()}>
+            <h2>Sign in to view plan and usage</h2>
+            <p>Your PROXY plan, renewal date, and token usage show here after you sign in.</p>
+            <button type="button" className="btn-primary" onClick={() => api_?.openLogin?.()}>
               Sign in
             </button>
           </div>
         ) : (
           <>
             <section className="settings-section">
-              <h2>Your account</h2>
+              <h2>Plan and usage</h2>
               <p className="settings-hint">
-                Subscribe, upgrade, or cancel on the PROXY X website. This app only reads your account state.
+                Change plan, payment method, or cancel on the PROXY website. This window only shows status and usage.
               </p>
 
               <div className="subscription-status-card">
                 <div className="subscription-status-row">
                   <span className="subscription-status-label">Status</span>
                   <span className={`subscription-badge ${badgeClass}`}>
-                    {status === "none" ? "Not subscribed" : status.replace(/_/g, " ")}
+                    {status === "none" ? "No active plan" : status.replace(/_/g, " ")}
                   </span>
                 </div>
                 {account?.email && (
@@ -170,21 +193,47 @@ export default function ManageSubscriptionView() {
                   </div>
                 )}
                 {account && (
-                  <div className="subscription-status-row">
-                    <span className="subscription-status-label">Usage</span>
-                    <span className="subscription-status-value">
-                      {formatQuota(account.weightedTokensUsed, account.weightedTokenLimit)}
-                    </span>
+                  <div className="subscription-usage-block">
+                    <div className="subscription-status-row">
+                      <span className="subscription-status-label">Usage this period</span>
+                      <span className="subscription-status-value">
+                        {formatQuota(account.weightedTokensUsed, account.weightedTokenLimit)}
+                      </span>
+                    </div>
+                    <div
+                      className="subscription-usage-track"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={usagePct}
+                      aria-label="Usage this period"
+                    >
+                      <div
+                        className={`subscription-usage-fill subscription-usage-fill-${usageTone}`}
+                        style={{ width: `${usagePct}%` }}
+                      />
+                    </div>
                   </div>
                 )}
               </div>
 
               <div className="subscription-actions">
-                <button type="button" className="settings-btn primary" onClick={openWebsiteBilling}>
-                  Manage on website
+                <button type="button" className="btn-primary" onClick={openWebsiteBilling}>
+                  Open billing on the website
                 </button>
-                <button type="button" className="settings-btn" onClick={loadAccount} disabled={loading}>
-                  Refresh
+                <button type="button" className="btn-secondary" onClick={loadAccount} disabled={loading}>
+                  Refresh status
+                </button>
+                <button
+                  type="button"
+                  className="btn-danger"
+                  onClick={async () => {
+                    await api_?.logout?.();
+                    setIsAuthenticated(false);
+                    setAccount(null);
+                  }}
+                >
+                  Sign out
                 </button>
               </div>
             </section>

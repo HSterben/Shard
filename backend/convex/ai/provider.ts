@@ -55,7 +55,7 @@ function authHeaders(apiKey: string): Record<string, string> {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${apiKey}`,
     'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'http://localhost:5173',
-    'X-Title': process.env.OPENROUTER_X_TITLE || 'PROXY X',
+    'X-Title': process.env.OPENROUTER_X_TITLE || 'PROXY',
   };
 }
 
@@ -108,7 +108,7 @@ function buildPayload(options: GenerateOptions, stream: boolean) {
 
 /**
  * Non-streaming completion via OpenRouter (Luna by default).
- * OpenRouter can apply its own provider fallbacks — PROXY X does not route.
+ * OpenRouter can apply its own provider fallbacks — PROXY does not route.
  */
 export async function generateAI(
   options: GenerateOptions

@@ -101,23 +101,30 @@ export default function SettingsView() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [usageDataEnabled, setUsageDataEnabled] = useState(false);
   const [message, setMessage] = useState(null);
+  const [signedIn, setSignedIn] = useState(null);
+  const [signingIn, setSigningIn] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
   const keybindInputRef = useRef(null);
 
   const loadSettings = async () => {
     if (!api) return;
     try {
-      const [kb, size, pos, path, startup] = await Promise.all([
+      const [kb, size, pos, path, startup, token, version] = await Promise.all([
         api.getKeybind(),
         api.getWindowSize(),
         api.getWindowPosition(),
         api.getPresetsPath(),
         api.getRunOnStartup?.() ?? Promise.resolve(false),
+        api.getAuthToken?.() ?? Promise.resolve(null),
+        api.getAppVersion?.() ?? Promise.resolve(""),
       ]);
       setKeybind(kb || "");
       setWindowSize(size || "Regular");
       setWindowPosition(pos || "bottom-right");
       setPresetsPath(path || "");
       setRunOnStartup(Boolean(startup));
+      setSignedIn(Boolean(token));
+      setAppVersion(version || "");
     } catch (e) {
       console.error(e);
     }
@@ -163,17 +170,61 @@ export default function SettingsView() {
     setTimeout(() => setMessage(null), 3000);
   };
 
+  useEffect(() => {
+    const unsubSuccess = api?.onAuthSuccess?.(() => {
+      setSignedIn(true);
+      setSigningIn(false);
+      setMessage({ text: "Signed in.", isError: false });
+      setTimeout(() => setMessage(null), 3000);
+    });
+    const unsubLogout = api?.onAuthLogout?.(() => {
+      setSignedIn(false);
+      setSigningIn(false);
+    });
+    const unsubError = api?.onAuthError?.(() => {
+      setSigningIn(false);
+      setMessage({ text: "Sign-in didn’t finish. Try again.", isError: true });
+      setTimeout(() => setMessage(null), 3000);
+    });
+    return () => {
+      unsubSuccess?.();
+      unsubLogout?.();
+      unsubError?.();
+    };
+  }, []);
+
+  const handleSignIn = async () => {
+    setSigningIn(true);
+    showMessage("Finish signing in in your browser…");
+    try {
+      await api?.openLogin?.();
+    } catch (e) {
+      setSigningIn(false);
+      showMessage(e?.message || "Couldn’t open the sign-in page", true);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await api?.logout?.();
+      setSignedIn(false);
+      showMessage("Signed out of PROXY.");
+    } catch (e) {
+      showMessage(e?.message || "Couldn’t sign out", true);
+    }
+  };
+
   const handleExport = async () => {
     const result = await api?.exportPresets();
     if (result?.canceled) return;
-    if (result?.success) showMessage("States exported.");
+    if (result?.success) showMessage("States file exported.");
     else showMessage(result?.error || "Export failed", true);
   };
 
   const handleImport = async () => {
     const result = await api?.importPresets();
     if (result?.canceled) return;
-    if (result?.success) showMessage("States imported.");
+    if (result?.success) showMessage("States file imported.");
     else showMessage(result?.error || "Import failed", true);
   };
 
@@ -181,16 +232,16 @@ export default function SettingsView() {
     const result = await api?.setPresetsPathToDefault();
     if (result?.success) {
       const path = await api?.getBundledPresetsPath();
-      setPresetsPath(path || "Default (proxy-x-presets.json)");
-      showMessage("Using default states file.");
-    } else showMessage("Failed to set default.", true);
+      setPresetsPath(path || "Built-in states file");
+      showMessage("Switched back to the built-in states file.");
+    } else showMessage("Couldn’t reset the states file.", true);
   };
 
   const handleRunOnStartupChange = (e) => {
     const enabled = e.target.checked;
     setRunOnStartup(enabled);
     api?.setRunOnStartup?.(enabled).then((result) => {
-      if (result && !result.success) showMessage(result.error || "Failed to update", true);
+      if (result && !result.success) showMessage(result.error || "Couldn’t update startup setting", true);
     });
   };
 
@@ -199,7 +250,7 @@ export default function SettingsView() {
   if (!api) {
     return (
       <div className="settings-view">
-        <p>Settings are only available in the Electron app.</p>
+        <p>Open Settings from the PROXY desktop app.</p>
       </div>
     );
   }
@@ -230,30 +281,30 @@ export default function SettingsView() {
             <>
               <h2>General</h2>
               <ToggleRow
-                label="Launch on system start"
-                hint="Open PROXY X when you log in"
+                label="Open PROXY at Windows sign-in"
+                hint="Starts PROXY in the background when you log into Windows"
                 checked={runOnStartup}
                 onChange={handleRunOnStartupChange}
               />
               <div className="settings-row">
                 <div>
-                  <div className="settings-row-label">Default state</div>
-                  <div className="settings-row-hint">Manage states in the States window</div>
+                  <div className="settings-row-label">States</div>
+                  <div className="settings-row-hint">Create and edit chat trigger words in the States window</div>
                 </div>
                 <button type="button" className="btn-secondary" onClick={() => api?.openPresetsWindow?.()}>
-                  Manage
+                  Open States
                 </button>
               </div>
               <div className="settings-row">
                 <div>
-                  <div className="settings-row-label">States file</div>
-                  <div className="settings-row-hint">{presetsPath || "—"}</div>
+                  <div className="settings-row-label">States file path</div>
+                  <div className="settings-row-hint">{presetsPath || "Not set"}</div>
                 </div>
               </div>
               <div className="settings-actions-row">
-                <button type="button" className="btn-secondary" onClick={handleExport}>Export</button>
-                <button type="button" className="btn-secondary" onClick={handleImport}>Import</button>
-                <button type="button" className="btn-secondary" onClick={handleDefaultPreset}>Use default</button>
+                <button type="button" className="btn-secondary" onClick={handleExport}>Export states</button>
+                <button type="button" className="btn-secondary" onClick={handleImport}>Import states</button>
+                <button type="button" className="btn-secondary" onClick={handleDefaultPreset}>Use built-in file</button>
               </div>
             </>
           )}
@@ -264,7 +315,7 @@ export default function SettingsView() {
               <div className="settings-row">
                 <div>
                   <div className="settings-row-label">Theme</div>
-                  <div className="settings-row-hint">Choose light, dark, or match your system</div>
+                  <div className="settings-row-hint">Light, dark, or follow Windows</div>
                 </div>
                 <div className="theme-segment" role="group" aria-label="Theme">
                   {[
@@ -291,21 +342,21 @@ export default function SettingsView() {
               <h2>Shortcuts</h2>
               <div className="settings-row">
                 <div>
-                  <div className="settings-row-label">Quick launch</div>
-                  <div className="settings-row-hint">Show or hide the chat bubble</div>
+                  <div className="settings-row-label">Show or hide bubble</div>
+                  <div className="settings-row-hint">Global shortcut while PROXY is running</div>
                 </div>
                 <div className="settings-keybind-row">
                   <input
                     ref={keybindInputRef}
                     type="text"
                     className="input-field settings-keybind-input"
-                    value={keybindEditing ? "Press keys..." : formatKeybind(keybind)}
+                    value={keybindEditing ? "Press a key combo…" : formatKeybind(keybind)}
                     readOnly
                     onFocus={handleKeybindClick}
                     aria-label="Global keybind"
                   />
                   <button type="button" className="btn-secondary" onClick={handleKeybindClick}>
-                    Change
+                    Change shortcut
                   </button>
                 </div>
               </div>
@@ -325,7 +376,7 @@ export default function SettingsView() {
                 />
               </div>
               <div className="settings-row settings-row-stack">
-                <div className="settings-row-label">Bubble position</div>
+                <div className="settings-row-label">Bubble corner</div>
                 <div className="settings-position-grid">
                   {POSITION_LABELS.map(({ value, label }) => (
                     <button
@@ -347,20 +398,40 @@ export default function SettingsView() {
               <h2>Account</h2>
               <div className="settings-account-card">
                 <p className="settings-row-hint">
-                  Subscribe, upgrade, and manage billing on the PROXY X website. This app only reads your account state.
+                  {signedIn === null
+                    ? "Checking whether you’re signed in…"
+                    : signedIn
+                      ? "Signed in. Chat history sync, states, and usage use this PROXY account."
+                      : "Sign in to sync states across devices and send chat messages."}
                 </p>
-                <button type="button" className="btn-primary" onClick={() => api?.openSubscriptionWindow?.()}>
-                  View account & usage
-                </button>
+                <div className="settings-account-actions">
+                  {signedIn ? (
+                    <button type="button" className="btn-danger" onClick={() => void handleSignOut()}>
+                      Sign out
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => void handleSignIn()}
+                      disabled={signingIn}
+                    >
+                      {signingIn ? "Waiting for browser…" : "Sign in"}
+                    </button>
+                  )}
+                  <button type="button" className="btn-secondary" onClick={() => api?.openSubscriptionWindow?.()}>
+                    Plan and usage
+                  </button>
+                </div>
                 <button
                   type="button"
-                  className="settings-btn"
+                  className="btn-secondary"
                   style={{ marginTop: 10 }}
-                  onClick={() => api?.openExternal?.("http://localhost:5173/account/billing")}
+                  onClick={() => api?.openExternal?.("https://getproxy.ca/account/billing")}
                 >
-                  Manage billing on website
+                  Open billing on the website
                 </button>
-                <div className="settings-version">PROXY X 1.0.0</div>
+                <div className="settings-version">PROXY {appVersion || "…"}</div>
               </div>
             </>
           )}
@@ -368,8 +439,8 @@ export default function SettingsView() {
             <>
               <h2>Notifications</h2>
               <ToggleRow
-                label="Desktop notifications"
-                hint="Notify you when a task needs your attention"
+                label="Windows notifications"
+                hint="Show a notification when PROXY needs your attention"
                 checked={notificationsEnabled}
                 onChange={(e) => setNotificationsEnabled(e.target.checked)}
               />
@@ -380,8 +451,8 @@ export default function SettingsView() {
             <>
               <h2>Privacy</h2>
               <ToggleRow
-                label="Share anonymous usage data"
-                hint="Help improve PROXY X with diagnostic information"
+                label="Share anonymous diagnostics"
+                hint="Sends crash and usage signals without chat contents"
                 checked={usageDataEnabled}
                 onChange={(e) => setUsageDataEnabled(e.target.checked)}
               />

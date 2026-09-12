@@ -9,12 +9,12 @@ function BubbleControls() {
   const hide = () => api?.hideWindow?.();
   return (
     <div className="bubble-controls">
-      <button type="button" className="bubble-control-btn" onClick={hide} aria-label="Minimize">
+      <button type="button" className="bubble-control-btn" onClick={hide} aria-label="Hide bubble">
         <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
           <path d="M2 6h8" stroke="currentColor" strokeWidth="1.2" />
         </svg>
       </button>
-      <button type="button" className="bubble-control-btn bubble-control-close" onClick={hide} aria-label="Close">
+      <button type="button" className="bubble-control-btn bubble-control-close" onClick={hide} aria-label="Hide bubble">
         <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
           <path d="M3 3l6 6M9 3L3 9" stroke="currentColor" strokeWidth="1.2" />
         </svg>
@@ -140,7 +140,7 @@ const ChatBubbleView = () => {
       <header className="bubble-titlebar">
         <div className="bubble-brand">
           <ProxyMark size={18} />
-          <span className="bubble-brand-name">PROXY X</span>
+          <span className="bubble-brand-name">PROXY</span>
         </div>
         <BubbleControls />
       </header>
@@ -149,7 +149,7 @@ const ChatBubbleView = () => {
         <textarea
           ref={textareaRef}
           className="bubble-textarea"
-          placeholder="What do you need?"
+          placeholder="Ask PROXY… Type a state trigger word first if you use one."
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={handleKeyDown}

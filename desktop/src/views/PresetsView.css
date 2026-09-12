@@ -26,6 +26,45 @@ html, body, #root {
   margin-bottom: 8px;
 }
 
+.presets-intro-head h2 {
+  margin: 0 0 6px;
+}
+
+.presets-account-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.presets-account-status {
+  min-width: 0;
+  flex: 1;
+}
+
+.presets-account-label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.35;
+}
+
+.presets-account-label-on {
+  color: var(--color-text-primary);
+}
+
+.presets-account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .presets-loading {
   padding: 0 0 24px;
 }
@@ -54,9 +93,44 @@ html, body, #root {
 }
 
 .preset-remove {
-  padding: 8px 14px;
-  font-size: 13px;
   flex-shrink: 0;
+}
+
+.preset-visibility {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-primary);
+  cursor: pointer;
+}
+
+.preset-visibility-readonly {
+  cursor: default;
+  opacity: 0.92;
+}
+
+.preset-visibility input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.preset-visibility-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.preset-visibility-hint {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.35;
 }
 
 .preset-field {
@@ -158,54 +232,4 @@ html, body, #root {
 .presets-footer-right {
   display: flex;
   gap: 10px;
-}
-
-.presets-action {
-  min-height: 36px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  padding: 0 15px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1;
-  cursor: pointer;
-  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
-}
-
-.presets-action-add,
-.presets-action-secondary {
-  background: var(--color-bg-elevated);
-  border-color: var(--color-border);
-  color: var(--color-text-primary);
-}
-
-.presets-action-add:hover,
-.presets-action-secondary:hover:not(:disabled) {
-  background: var(--color-bg-hover);
-  border-color: var(--color-border-accent);
-}
-
-.presets-action-primary {
-  background: var(--color-accent-primary);
-  color: var(--color-on-accent);
-}
-
-.presets-action-primary:hover:not(:disabled) {
-  background: var(--color-accent-hover);
-  box-shadow: 0 4px 12px var(--color-glow);
-}
-
-.presets-action:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.presets-action:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }

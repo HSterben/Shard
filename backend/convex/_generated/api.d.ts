@@ -13,6 +13,8 @@ import type * as ai_model from "../ai/model.js";
 import type * as ai_provider from "../ai/provider.js";
 import type * as auth from "../auth.js";
 import type * as billing from "../billing.js";
+import type * as defaultStates from "../defaultStates.js";
+import type * as gallery from "../gallery.js";
 import type * as http from "../http.js";
 import type * as openrouter from "../openrouter.js";
 import type * as openrouterModel from "../openrouterModel.js";
@@ -34,6 +36,8 @@ declare const fullApi: ApiFromModules<{
   "ai/provider": typeof ai_provider;
   auth: typeof auth;
   billing: typeof billing;
+  defaultStates: typeof defaultStates;
+  gallery: typeof gallery;
   http: typeof http;
   openrouter: typeof openrouter;
   openrouterModel: typeof openrouterModel;

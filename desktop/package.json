@@ -1,9 +1,13 @@
 {
-  "name": "proxy-x",
-  "productName": "PROXY X",
+  "name": "proxy",
+  "productName": "PROXY",
   "version": "1.0.1",
-  "description": "PROXY X - AI chat assistant",
+  "description": "PROXY - AI chat assistant",
   "main": ".vite/build/main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HSterben/Proxy.git"
+  },
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",
@@ -11,6 +15,7 @@
     "make:win": "electron-forge make --platform win32",
     "make:mac": "electron-forge make --platform darwin",
     "publish": "electron-forge publish",
+    "publish:win": "electron-forge publish --platform win32",
     "lint": "echo \"No linting configured\""
   },
   "keywords": [],
@@ -28,18 +33,23 @@
     "@electron-forge/plugin-auto-unpack-natives": "^7.10.2",
     "@electron-forge/plugin-fuses": "^7.10.2",
     "@electron-forge/plugin-vite": "^7.10.2",
+    "@electron-forge/publisher-github": "^7.11.2",
     "@electron/fuses": "^1.8.0",
+    "@vitejs/plugin-react": "^5.1.2",
     "electron": "39.2.7",
     "vite": "^5.4.21"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "^5.1.2",
     "convex": "^1.31.2",
     "electron-squirrel-startup": "^1.0.1",
     "electron-store": "^8.2.0",
+    "katex": "^0.18.7",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "update-electron-app": "^3.3.0"
   }
 }
