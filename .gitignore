@@ -109,10 +109,12 @@ lerna-debug.log*
 *.db-shm
 *.db-wal
 
-# MongoDB
+# MongoDB / local DB dumps (not app source trees like web/src/data/)
 data/
-**/data/
+**/mongodb-data/
 mongodb-data/
+!web/src/data/
+!web/src/data/**
 
 # PostgreSQL
 *.sql
