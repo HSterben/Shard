@@ -1,3 +1,17 @@
-node_modules
-dist
+# Dependencies & build
+node_modules/
+dist/
+
+# Local env (keep .env.example)
+.env
 .env.local
+.env.*.local
+!.env.example
+
+# Local agent scratch
+.agent-local/
+
+# Logs / temp
+*.log
+tmp/
+.temp/

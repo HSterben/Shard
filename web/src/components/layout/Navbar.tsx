@@ -1,37 +1,106 @@
 import { useEffect, useState } from 'react'
-import { Link, NavLink, useLocation } from 'react-router-dom'
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { ArrowUpRight, Menu, X } from 'lucide-react'
+import { DESKTOP_DOWNLOAD_URL, navLinks } from '../../data/content'
 import BrandMark from '../ui/BrandMark'
 import AccountMenu from './AccountMenu'
 
-function LogoMark() {
+function LogoMark({ inverted = false }: { inverted?: boolean }) {
   return (
-    <span className="flex items-center gap-2.5 text-ink" aria-hidden="true">
-      <BrandMark className="h-7 w-7" />
-      <span className="text-base font-semibold tracking-tight">PROXY X</span>
+    <span className={`flex items-center gap-2.5 ${inverted ? 'text-light' : 'text-ink'}`} aria-hidden="true">
+      <BrandMark className="h-7 w-7" inverted={inverted} />
+      <span className="text-base font-semibold tracking-tight">PROXY</span>
     </span>
   )
 }
 
-const links = [
-  { label: 'Features', href: '/#features' },
-  { label: 'How it works', href: '/#process' },
-  { label: 'Pricing', href: '/#pricing' },
-  { label: 'About', href: '/about' },
-  { label: 'Blog', href: '/blog' },
-]
+function NavItems({
+  onNavigate,
+  inverted = false,
+}: {
+  onNavigate?: () => void
+  inverted?: boolean
+}) {
+  const navigate = useNavigate()
+  const { pathname } = useLocation()
+  const idle = inverted ? 'text-light/75 hover:text-light' : 'text-ink/55 hover:text-ink'
+  const active = inverted ? 'text-light' : 'text-ink'
+
+  return (
+    <>
+      {navLinks.map((link) =>
+        link.href.startsWith('/#') ? (
+          <a
+            key={link.href}
+            href={link.href}
+            className={`text-[15px] font-medium transition-colors duration-200 ${idle}`}
+            onClick={(e) => {
+              e.preventDefault()
+              onNavigate?.()
+              const id = link.href.slice(2) // "/#features" → "features"
+              if (pathname === '/') {
+                document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                window.history.replaceState(null, '', `#${id}`)
+              } else {
+                navigate({ pathname: '/', hash: id })
+              }
+            }}
+          >
+            {link.label}
+          </a>
+        ) : (
+          <NavLink
+            key={link.href}
+            to={link.href}
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              `text-[15px] font-medium transition-colors duration-200 ${
+                isActive ? active : idle
+              }`
+            }
+          >
+            {link.label}
+          </NavLink>
+        ),
+      )}
+    </>
+  )
+}
+
+/** Light text over dark bands; dark text over light bands. Backdrop blur tints the bar itself. */
+function useNavTone(): 'light' | 'dark' {
+  const { pathname } = useLocation()
+  const [tone, setTone] = useState<'light' | 'dark'>(pathname === '/' ? 'dark' : 'light')
+
+  useEffect(() => {
+    const update = () => {
+      const nodes = document.querySelectorAll<HTMLElement>('[data-nav-tone="dark"]')
+      const bandBottom = 72
+      let overDark = false
+      nodes.forEach((node) => {
+        const rect = node.getBoundingClientRect()
+        if (rect.top < bandBottom && rect.bottom > 0) overDark = true
+      })
+      setTone(overDark ? 'dark' : 'light')
+    }
+
+    update()
+    window.addEventListener('scroll', update, { passive: true })
+    window.addEventListener('resize', update)
+    return () => {
+      window.removeEventListener('scroll', update)
+      window.removeEventListener('resize', update)
+    }
+  }, [pathname])
+
+  return tone
+}
 
 export default function Navbar() {
   const { pathname } = useLocation()
   const [open, setOpen] = useState(false)
-  const [scrolled, setScrolled] = useState(false)
-
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 8)
-    onScroll()
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
-  }, [])
+  const tone = useNavTone()
+  const inverted = tone === 'dark'
 
   useEffect(() => {
     setOpen(false)
@@ -44,64 +113,48 @@ export default function Navbar() {
     }
   }, [open])
 
-  if (pathname === '/' || pathname === '/app') return null
+  if (pathname === '/app') return null
+
+  const ctaIdle = inverted
+    ? 'border-light/25 text-light hover:border-light hover:bg-light/10'
+    : 'border-ink/12 text-ink/60 hover:border-ink/25 hover:bg-ink/[0.04] hover:text-ink'
+  const menuBtn = inverted
+    ? 'border-light/20 text-light'
+    : 'border-hairline text-ink'
 
   return (
-    <header
-      className={`fixed inset-x-0 top-0 z-50 border-b bg-white transition-colors duration-200 ${
-        scrolled || open ? 'border-hairline' : 'border-transparent'
-      }`}
-    >
-      <div className="page flex h-16 items-center justify-between gap-4">
-        <Link to="/" className="pressable shrink-0" aria-label="PROXY X home">
-          <LogoMark />
+    <header className={`site-nav fixed inset-x-0 top-0 z-50 ${inverted ? 'site-nav--dark' : 'site-nav--light'}`}>
+      <div className="page relative flex h-16 items-center justify-between gap-4">
+        <Link to="/" className="pressable shrink-0" aria-label="PROXY home">
+          <LogoMark inverted={inverted} />
         </Link>
 
         <nav className="hidden items-center gap-7 lg:flex" aria-label="Primary">
-          {links.map((link) =>
-            link.href.startsWith('/#') ? (
-              <a
-                key={link.href}
-                href={link.href}
-                className="text-[15px] font-medium text-ink/50 transition-colors duration-200 hover:text-ink"
-              >
-                {link.label}
-              </a>
-            ) : (
-              <NavLink
-                key={link.href}
-                to={link.href}
-                className={({ isActive }) =>
-                  `text-[15px] font-medium transition-colors duration-200 ${
-                    isActive ? 'text-ink' : 'text-ink/50 hover:text-ink'
-                  }`
-                }
-              >
-                {link.label}
-              </NavLink>
-            ),
-          )}
+          <NavItems inverted={inverted} />
         </nav>
 
-        <div className="hidden items-center gap-3 lg:flex">
-          <Link
-            to="/contact"
-            className="pressable inline-flex min-h-11 items-center rounded-[10px] px-3 text-[15px] font-medium text-ink/50 transition-colors duration-200 hover:text-ink"
+        <div className="hidden items-center gap-2 lg:flex">
+          <a
+            href={DESKTOP_DOWNLOAD_URL}
+            target="_blank"
+            rel="noreferrer"
+            className={`pressable inline-flex min-h-10 items-center gap-1.5 rounded-full border px-4 text-[15px] font-medium transition-colors duration-200 ${ctaIdle}`}
           >
             Download for Windows
-          </Link>
+            <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.5} />
+          </a>
           <Link
             to="/app"
-            className="pressable inline-flex min-h-11 items-center rounded-[10px] px-4 text-[15px] font-medium text-ink/50 transition-colors duration-200 hover:text-ink"
+            className={`pressable inline-flex min-h-10 items-center rounded-full border px-4 text-[15px] font-medium transition-colors duration-200 ${ctaIdle}`}
           >
-            Try on the web
+            Open PROXY Web
           </Link>
-          <AccountMenu variant="light" />
+          <AccountMenu variant={inverted ? 'dark' : 'light'} />
         </div>
 
         <button
           type="button"
-          className="pressable flex h-11 w-11 items-center justify-center rounded-[10px] border border-hairline text-ink lg:hidden"
+          className={`pressable flex h-11 w-11 items-center justify-center rounded-full border lg:hidden ${menuBtn}`}
           aria-expanded={open}
           aria-controls="mobile-nav"
           onClick={() => setOpen((v) => !v)}
@@ -112,122 +165,44 @@ export default function Navbar() {
       </div>
 
       {open && (
-        <div id="mobile-nav" className="border-t border-hairline bg-white lg:hidden">
+        <div
+          id="mobile-nav"
+          className={`border-t lg:hidden ${
+            inverted ? 'border-light/10 bg-graphite/90' : 'border-hairline bg-paper/90'
+          }`}
+        >
           <nav className="page flex flex-col gap-1 py-4" aria-label="Mobile">
-            {links.map((link) =>
-              link.href.startsWith('/#') ? (
-                <a
-                  key={link.href}
-                  href={link.href}
-                  className="flex min-h-11 items-center text-base text-ink"
-                  onClick={() => setOpen(false)}
-                >
-                  {link.label}
-                </a>
-              ) : (
-                <Link
-                  key={link.href}
-                  to={link.href}
-                  className="flex min-h-11 items-center text-base text-ink"
-                >
-                  {link.label}
-                </Link>
-              ),
-            )}
+            <div
+              className={`flex flex-col gap-1 [&_a]:flex [&_a]:min-h-11 [&_a]:items-center [&_a]:text-base ${
+                inverted ? '[&_a]:text-light' : '[&_a]:text-ink'
+              }`}
+            >
+              <NavItems inverted={inverted} onNavigate={() => setOpen(false)} />
+            </div>
             <Link
               to="/app"
-              className="mt-2 flex min-h-11 items-center justify-center rounded-[10px] border border-hairline text-base text-ink"
+              className={`mt-2 flex min-h-11 items-center justify-center rounded-[10px] border text-base ${
+                inverted ? 'border-light/20 text-light' : 'border-hairline text-ink'
+              }`}
             >
-              Try on the web
+              Open PROXY Web
             </Link>
-            <Link
-              to="/contact"
-              className="flex min-h-11 items-center justify-center rounded-[10px] border border-hairline text-base text-ink"
+            <a
+              href={DESKTOP_DOWNLOAD_URL}
+              target="_blank"
+              rel="noreferrer"
+              className={`flex min-h-11 items-center justify-center rounded-[10px] border text-base ${
+                inverted ? 'border-light/20 text-light' : 'border-hairline text-ink'
+              }`}
             >
               Download for Windows
-            </Link>
+            </a>
             <div className="mt-3 px-1">
-              <AccountMenu variant="light" />
+              <AccountMenu variant={inverted ? 'dark' : 'light'} />
             </div>
           </nav>
         </div>
       )}
     </header>
-  )
-}
-
-export function HeroNav() {
-  const [open, setOpen] = useState(false)
-  const heroLinks = [
-    { label: 'Features', href: '/#features' },
-    { label: 'About', href: '/about' },
-    { label: 'Blog', href: '/blog' },
-    { label: 'Pricing', href: '/#pricing' },
-    { label: 'Contact', href: '/contact' },
-  ]
-
-  return (
-    <nav className="relative mb-3 md:mb-4" aria-label="Primary">
-      <div className="glass-nav hero-radius flex items-center justify-between gap-4 px-4 py-3 md:px-6 md:py-4">
-        <Link to="/" className="pressable flex min-h-11 shrink-0 items-center gap-2.5 text-light">
-          <BrandMark className="h-7 w-7" inverted />
-          <span className="text-[15px] font-semibold tracking-tight">PROXY X</span>
-        </Link>
-
-        <ul className="hidden items-center gap-6 md:flex lg:gap-10">
-          {heroLinks.map((link) => (
-            <li key={link.href}>
-              <a
-                href={link.href}
-                className="text-[15px] text-light/75 transition-colors duration-200 hover:text-light"
-              >
-                {link.label}
-              </a>
-            </li>
-          ))}
-        </ul>
-
-        <div className="flex items-center gap-2">
-          <Link
-            to="/app"
-            className="pressable hidden min-h-11 shrink-0 items-center rounded-full border border-light/25 px-4 py-2 text-[15px] font-medium text-light transition-colors duration-200 hover:border-light hover:bg-light/10 sm:inline-flex md:px-5"
-          >
-            Try on the web
-          </Link>
-          <Link
-            to="/contact"
-            className="pressable hidden min-h-11 shrink-0 items-center gap-2 rounded-full border border-light/25 px-4 py-2 text-[15px] font-medium text-light transition-colors duration-200 hover:border-light hover:bg-light/10 md:inline-flex md:px-5"
-          >
-            Get the app
-            <ArrowUpRight className="h-4 w-4" strokeWidth={1.5} />
-          </Link>
-          <AccountMenu variant="dark" />
-          <button
-            type="button"
-            className="pressable flex h-11 w-11 items-center justify-center rounded-full border border-light/20 text-light md:hidden"
-            aria-expanded={open}
-            onClick={() => setOpen((v) => !v)}
-          >
-            {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-            <span className="sr-only">{open ? 'Close menu' : 'Open menu'}</span>
-          </button>
-        </div>
-      </div>
-
-      {open && (
-        <div className="absolute inset-x-0 top-full z-20 mt-2 rounded-[20px] border border-light/15 bg-graphite p-3 md:hidden">
-          {heroLinks.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              className="flex min-h-11 items-center px-3 text-base text-light"
-              onClick={() => setOpen(false)}
-            >
-              {link.label}
-            </a>
-          ))}
-        </div>
-      )}
-    </nav>
   )
 }

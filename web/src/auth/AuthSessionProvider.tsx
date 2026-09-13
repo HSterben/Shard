@@ -44,7 +44,15 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
       initError,
       signIn: (opts) => startWorkosSignIn(opts?.state),
       switchAccount: (opts) => switchWorkosAccount(opts?.state),
-      signOut: (opts) => clientRef.current?.signOut(opts) ?? Promise.resolve(),
+      signOut: async (opts) => {
+        const client = clientRef.current
+        if (!client) return
+        if (opts && 'navigate' in opts && opts.navigate === false) {
+          await client.signOut({ ...opts, navigate: false })
+          return
+        }
+        await client.signOut(opts)
+      },
       getAccessToken: (opts) => clientRef.current?.getAccessToken(opts) ?? notReady(),
       getSignInUrl: (opts) => clientRef.current?.getSignInUrl(opts) ?? Promise.resolve(''),
     }),

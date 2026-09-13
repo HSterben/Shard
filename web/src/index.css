@@ -8,9 +8,9 @@
   --color-paper: #f5f5f2;
   --color-paper-muted: #ececea;
   --color-surface-muted: #ececea;
-  --color-graphite: #080b0f;
-  --color-surface-dark: #11171d;
-  --color-surface-elevated: #192229;
+  --color-graphite: #121212;
+  --color-surface-dark: #1a1a1a;
+  --color-surface-elevated: #212121;
   --color-light: #f2f7f8;
   --color-muted-dark: #5c6b73;
   --color-muted-light: #8e9da5;
@@ -25,6 +25,13 @@
 @layer base {
   html {
     scroll-behavior: smooth;
+  }
+
+  #features,
+  #process,
+  #customize,
+  #pricing {
+    scroll-margin-top: 5rem;
   }
 
   body {
@@ -123,6 +130,39 @@
     -webkit-backdrop-filter: blur(20px) saturate(160%);
     border: 1px solid rgba(255, 255, 255, 0.16);
   }
+
+  /* Fixed site nav — frosted glass that picks up color from content scrolling behind it */
+  .site-nav {
+    backdrop-filter: saturate(180%) blur(22px);
+    -webkit-backdrop-filter: saturate(180%) blur(22px);
+    transition:
+      background-color 280ms ease,
+      border-color 280ms ease,
+      box-shadow 280ms ease,
+      color 280ms ease;
+  }
+
+  .site-nav--light {
+    background: rgb(245 245 242 / 0.58);
+    border-bottom: 1px solid rgb(11 13 15 / 0.08);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.35) inset;
+  }
+
+  .site-nav--dark {
+    background: rgb(18 18 18 / 0.48);
+    border-bottom: 1px solid rgb(255 255 255 / 0.1);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.06) inset;
+  }
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .site-nav--light {
+      background: rgb(245 245 242 / 0.94);
+    }
+
+    .site-nav--dark {
+      background: rgb(18 18 18 / 0.94);
+    }
+  }
 }
 
 @layer utilities {
@@ -157,7 +197,7 @@
 
   .card-dark {
     border-radius: 10px;
-    @apply border border-white/10 bg-black text-white;
+    @apply border border-white/10 bg-graphite text-white;
   }
 
   .hairline {

@@ -1,14 +1,14 @@
-import { Routes, Route } from 'react-router-dom'
+import { Navigate, Routes, Route } from 'react-router-dom'
 import Layout from './components/layout/Layout'
 import Home from './pages/Home'
 import About from './pages/About'
-import Blog from './pages/Blog'
-import Article from './pages/Article'
+import States from './pages/States'
 import Contact from './pages/Contact'
 import AppChat from './pages/AppChat'
 import AuthCallback from './pages/AuthCallback'
 import Account from './pages/Account'
 import Billing from './pages/Billing'
+import Profile from './pages/Profile'
 import NotFound from './pages/NotFound'
 
 export default function App() {
@@ -20,9 +20,11 @@ export default function App() {
         <Route index element={<Home />} />
         <Route path="account" element={<Account />} />
         <Route path="account/billing" element={<Billing />} />
+        <Route path="u/:workosId" element={<Profile />} />
         <Route path="about" element={<About />} />
-        <Route path="blog" element={<Blog />} />
-        <Route path="blog/:slug" element={<Article />} />
+        <Route path="states" element={<States />} />
+        <Route path="blog" element={<Navigate to="/states" replace />} />
+        <Route path="blog/:slug" element={<Navigate to="/states" replace />} />
         <Route path="contact" element={<Contact />} />
         <Route path="*" element={<NotFound />} />
       </Route>

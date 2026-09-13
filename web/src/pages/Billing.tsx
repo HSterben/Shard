@@ -54,7 +54,10 @@ export default function Billing() {
     setLoading(priceId)
     setError('')
     try {
-      const data = await fetchWithAuth('/stripe/create-checkout-session-auth', { priceId })
+      const data = await fetchWithAuth('/stripe/create-checkout-session-auth', {
+        priceId,
+        email: user?.email ?? undefined,
+      })
       if (!data.url) throw new Error('No checkout URL returned')
       window.location.href = data.url
     } catch (err) {
@@ -101,7 +104,7 @@ export default function Billing() {
           ← Account
         </Link>
         <p className="eyebrow mt-6">Billing</p>
-        <h1 className="display mt-3 text-3xl font-semibold">Subscription & payments</h1>
+        <h1 className="display mt-3 text-3xl font-semibold">Plan and payments</h1>
 
         {checkout === 'success' && (
           <p className="mt-6 rounded-[10px] border border-brand/30 bg-brand-surface px-4 py-3 text-[15px] text-ink">
@@ -136,7 +139,9 @@ export default function Billing() {
             </>
           ) : (
             <>
-              <p className="text-[15px] text-ink/55">Choose a plan to unlock AI on web and desktop.</p>
+              <p className="text-[15px] text-ink/55">
+                Choose monthly or yearly to chat on the web client and Windows app.
+              </p>
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   type="button"
