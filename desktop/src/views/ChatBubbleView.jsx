@@ -149,7 +149,7 @@ const ChatBubbleView = () => {
         <textarea
           ref={textareaRef}
           className="bubble-textarea"
-          placeholder="Ask PROXY… Type a state trigger word first if you use one."
+          placeholder="Ask PROXY…"
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={handleKeyDown}

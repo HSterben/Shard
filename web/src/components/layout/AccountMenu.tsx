@@ -1,15 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { ConvexClient } from 'convex/browser'
 import { ChevronDown, LogOut, User } from 'lucide-react'
 import { useAuth } from '../../auth/AuthSessionProvider'
+import { api } from '../../convex/api'
+import { convexUrl } from '../../lib/convexUrls'
+import ProfileAvatar from '../ui/ProfileAvatar'
 
 type AccountMenuProps = {
   variant?: 'light' | 'dark'
 }
 
 export default function AccountMenu({ variant = 'dark' }: AccountMenuProps) {
-  const { user, isLoading, signIn, signOut } = useAuth()
+  const { user, isLoading, signIn, signOut, getAccessToken } = useAuth()
+  const convex = useRef(new ConvexClient(convexUrl))
   const [open, setOpen] = useState(false)
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
+  const [displayName, setDisplayName] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -20,6 +27,25 @@ export default function AccountMenu({ variant = 'dark' }: AccountMenuProps) {
     document.addEventListener('mousedown', onDoc)
     return () => document.removeEventListener('mousedown', onDoc)
   }, [open])
+
+  useEffect(() => {
+    if (!user) {
+      setAvatarUrl(null)
+      setDisplayName(null)
+      return
+    }
+    convex.current.setAuth(async () => (await getAccessToken()) ?? null)
+    void convex.current
+      .query(api.users.getMyProfile, {})
+      .then((p) => {
+        const profile = p as { displayName?: string; avatarUrl?: string | null } | null
+        if (profile?.displayName) setDisplayName(profile.displayName)
+        setAvatarUrl(profile?.avatarUrl ?? null)
+      })
+      .catch(() => {
+        /* ignore */
+      })
+  }, [user, getAccessToken])
 
   const isDark = variant === 'dark'
   const ghostBtn = isDark
@@ -60,8 +86,7 @@ export default function AccountMenu({ variant = 'dark' }: AccountMenuProps) {
     )
   }
 
-  const label = user.email ?? user.firstName ?? 'Account'
-  const initial = (user.email?.[0] ?? user.firstName?.[0] ?? '?').toUpperCase()
+  const label = displayName || user.email || user.firstName || 'Account'
 
   return (
     <div className="relative" ref={ref}>
@@ -76,13 +101,7 @@ export default function AccountMenu({ variant = 'dark' }: AccountMenuProps) {
         aria-haspopup="menu"
         onClick={() => setOpen((v) => !v)}
       >
-        <span
-          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
-            isDark ? 'bg-brand/20 text-brand' : 'bg-brand-surface text-ink'
-          }`}
-        >
-          {initial}
-        </span>
+        <ProfileAvatar name={label} src={avatarUrl} size="sm" />
         <span className="truncate">{label}</span>
         <ChevronDown className="h-4 w-4 shrink-0 opacity-60" strokeWidth={1.5} />
       </button>

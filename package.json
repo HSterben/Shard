@@ -1,7 +1,7 @@
 {
-  "name": "proxy-x",
+  "name": "proxy",
   "version": "1.0.0",
-  "description": "PROXY X - AI-powered application monorepo",
+  "description": "PROXY - AI-powered application monorepo",
   "license": "UNLICENSED",
   "private": true,
   "author": "Sterben",

@@ -7,7 +7,7 @@ export default function Process() {
       <div className="page">
         <Reveal className="mb-10 max-w-xl">
           <p className="eyebrow">How it works</p>
-          <h2 className="display mt-3 font-semibold">Up and running in three steps.</h2>
+          <h2 className="display mt-3 font-semibold">Sign in, pick a state, send a message.</h2>
         </Reveal>
 
         <ol className="relative grid gap-8 md:grid-cols-3">

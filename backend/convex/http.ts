@@ -251,7 +251,7 @@ async function verifyStripeWebhookSignature(rawBody: string, signatureHeader: st
 const WORKOS_CLIENT_ID = 'client_01KGNG7JGSBPA9HZWGVKZ8N8MS';
 const WORKOS_REDIRECT_URI = (
   process.env.WORKOS_REDIRECT_URI ||
-  'https://proficient-squid-85.convex.site/auth/callback'
+  'https://strong-poodle-712.convex.site/auth/callback'
 ).replace(/\/$/, '');
 
 // Start OAuth flow - redirects to WorkOS

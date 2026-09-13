@@ -1,20 +1,43 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
 import { ConvexClient } from 'convex/browser'
 import { useAuth } from '../auth/AuthSessionProvider'
 import { api } from '../convex/api'
 import { convexSiteUrl, convexUrl } from '../lib/convexUrls'
+import { AI_RESPONSE_MODE, fetchAiReply } from '../lib/aiResponseMode'
+import { normalizeAiMarkdown } from '../lib/aiMarkdown'
+import BrandMark from '../components/ui/BrandMark'
+import {
+  DEFAULT_MAX_CONTEXT_TOKENS,
+  DEFAULT_MAX_OUTPUT_TOKENS,
+  buildBudgetedMessages,
+  clampOutputTokens,
+  currentTurnToApiMessage,
+  historyToApiMessages,
+} from '../lib/contextBudget'
+import 'katex/dist/katex.min.css'
 import './app/ChatView.css'
 
+const REMARK_PLUGINS = [remarkGfm, remarkMath]
+const REHYPE_PLUGINS = [rehypeKatex]
+
+const SUGGESTED_PROMPTS = [
+  'Explain that with an analogy',
+  'Give me the short version',
+  'What should I do next?',
+]
+
 const DEFAULT_SYSTEM_INSTRUCTION =
-  'You are PROXY X, an expert AI assistant. Be concise and helpful. Always provide clear, accurate information and assist the user to the best of your ability.'
+  'You are PROXY, an expert AI assistant. Be concise and helpful. Always provide clear, accurate information and assist the user to the best of your ability.'
 
 const TONES = [
-  { id: 'concise', label: 'Concise', instruction: 'Respond concisely. Prefer short, direct answers.' },
-  { id: 'professional', label: 'Professional', instruction: 'Use a professional, polished tone.' },
-  { id: 'precise', label: 'Precise', instruction: 'Be precise and specific. Avoid vague language.' },
+  { id: 'concise', label: 'Concise', instruction: 'Keep answers short. Lead with the direct answer.' },
+  { id: 'professional', label: 'Professional', instruction: 'Use a formal, workplace tone.' },
+  { id: 'precise', label: 'Precise', instruction: 'Prefer exact wording. Avoid vague claims.' },
 ] as const
 
 type ToneId = (typeof TONES)[number]['id']
@@ -43,6 +66,7 @@ type ChatMessage = {
   timestamp: Date
   images?: string[]
   isStreaming?: boolean
+  presetName?: string | null
 }
 
 type StatePreset = {
@@ -71,7 +95,7 @@ function optionsFromPreset(
   const base: ChatOptions = {
     systemInstruction: applyTone(DEFAULT_SYSTEM_INSTRUCTION, toneId),
     temperature: 0.5,
-    maxTokens: 4096,
+    maxTokens: DEFAULT_MAX_OUTPUT_TOKENS,
     topP: 0.95,
     frequencyPenalty: 0.0,
     presencePenalty: 0.0,
@@ -93,7 +117,9 @@ function optionsFromPreset(
   return {
     systemInstruction: applyTone(sys, toneId),
     temperature: typeof p.temperature === 'number' ? p.temperature : base.temperature,
-    maxTokens: typeof p.maxTokens === 'number' && p.maxTokens > 0 ? p.maxTokens : base.maxTokens,
+    maxTokens: clampOutputTokens(
+      typeof p.maxTokens === 'number' && p.maxTokens > 0 ? p.maxTokens : base.maxTokens,
+    ),
     topP: typeof p.topP === 'number' ? p.topP : base.topP,
     frequencyPenalty:
       typeof p.frequencyPenalty === 'number' ? p.frequencyPenalty : base.frequencyPenalty,
@@ -175,8 +201,10 @@ export default function AppChat() {
     yearly: null,
   })
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
-  const [activeTone, setActiveTone] = useState<ToneId>('precise')
-  const [statesOpen, setStatesOpen] = useState(false)
+  const activeTone: ToneId = 'precise'
+  const [mainTab, setMainTab] = useState<'chat' | 'states'>('chat')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [messageFeedback, setMessageFeedback] = useState<Record<number, 'up' | 'down' | undefined>>({})
   const [presets, setPresets] = useState<Record<string, StatePreset>>({})
   const [activePreset, setActivePreset] = useState<string | null>(null)
   const [statesQuery, setStatesQuery] = useState('')
@@ -185,6 +213,10 @@ export default function AppChat() {
   const conversationContext = useRef<{ text: string; sender: string; images?: string[] }[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    document.title = 'PROXY Web'
+  }, [])
 
   const startSignIn = useCallback(() => {
     void signIn({ state: { returnTo: '/app' } })
@@ -214,6 +246,11 @@ export default function AppChat() {
     let cancelled = false
     ;(async () => {
       try {
+        try {
+          await convex.current.mutation(api.states.ensureMyLibrary, {})
+        } catch (migrateErr) {
+          console.warn('Library migrate skipped:', migrateErr)
+        }
         const cloud = await convex.current.query(api.states.getMyStates, {})
         if (cancelled) return
         setPresets((cloud?.states as Record<string, StatePreset>) || {})
@@ -252,7 +289,7 @@ export default function AppChat() {
       const res = await fetch(`${convexSiteUrl}/stripe/create-checkout-session-auth`, {
         method: 'POST',
         headers: await bearerHeaders(),
-        body: JSON.stringify({ priceId }),
+        body: JSON.stringify({ priceId, email: user?.email ?? undefined }),
       })
       const data = (await res.json().catch(() => ({}))) as { url?: string; error?: string }
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
@@ -284,39 +321,32 @@ export default function AppChat() {
     }
   }
 
-  const buildContextMessages = (message: string, files: AttachedFile[]) => {
-    type ContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }
-    type CtxMsg = { role: string; content: string | ContentPart[] }
-    const out: CtxMsg[] = conversationContext.current.map((msg) => {
-      const role = msg.sender === 'user' ? 'user' : 'assistant'
-      if (msg.images?.length) {
-        const content: ContentPart[] = [
-          { type: 'text', text: msg.text },
-          ...msg.images.map((img) => ({ type: 'image_url' as const, image_url: { url: img } })),
-        ]
-        return { role, content }
-      }
-      return { role, content: msg.text }
+  const buildContextMessages = (message: string, files: AttachedFile[], systemInstruction: string) => {
+    const historyMessages = historyToApiMessages(conversationContext.current)
+    const currentMessage = currentTurnToApiMessage(message, files)
+    const { messages, meta } = buildBudgetedMessages({
+      historyMessages,
+      currentMessage,
+      systemInstruction,
+      maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS,
     })
-    if (files.length > 0) {
-      out.push({
-        role: 'user',
-        content: [
-          { type: 'text', text: message || '' },
-          ...files.map((f) => ({ type: 'image_url' as const, image_url: { url: f.dataUrl } })),
-        ],
-      })
-    } else {
-      out.push({ role: 'user', content: message })
+    if (meta.historyDropped > 0) {
+      console.log(
+        `[context] Kept ${meta.historyKept} prior turns, dropped ${meta.historyDropped} (budget ${meta.maxContextTokens})`,
+      )
     }
-    return out
+    return messages
   }
 
   const chatBody = (message: string, files: AttachedFile[], options: ChatOptions) => ({
-    messages: buildContextMessages(message, files),
+    messages: buildContextMessages(
+      message,
+      files,
+      options.systemInstruction || DEFAULT_SYSTEM_INSTRUCTION,
+    ),
     systemInstruction: options.systemInstruction,
     temperature: options.temperature,
-    maxTokens: options.maxTokens,
+    maxTokens: clampOutputTokens(options.maxTokens),
     topP: options.topP,
     frequencyPenalty: options.frequencyPenalty,
     presencePenalty: options.presencePenalty,
@@ -390,16 +420,24 @@ export default function AppChat() {
 
     const options = optionsFromPreset(presets, activePreset, userMessage, activeTone)
     try {
-      let contentToUse = ''
-      try {
-        contentToUse = await askOpenRouterStream(userMessage, files, options, (chunk) => {
-          setMessages((prev) =>
-            prev.map((msg) => (msg.id === aiMessageId ? { ...msg, text: msg.text + chunk } : msg)),
-          )
-        })
-      } catch (streamErr) {
-        console.warn('Stream failed, falling back to complete:', streamErr)
-        contentToUse = await askOpenRouterComplete(userMessage, files, options)
+      // Flip AI_RESPONSE_MODE in ../lib/aiResponseMode.ts ('stream' | 'complete')
+      const appendChunk = (chunk: string) => {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === aiMessageId ? { ...msg, text: msg.text + chunk, isStreaming: true } : msg,
+          ),
+        )
+      }
+
+      const { content: rawContent, usedStream } = await fetchAiReply({
+        mode: AI_RESPONSE_MODE,
+        stream: (onChunk) => askOpenRouterStream(userMessage, files, options, onChunk),
+        complete: () => askOpenRouterComplete(userMessage, files, options),
+        onChunk: AI_RESPONSE_MODE === 'stream' ? appendChunk : undefined,
+      })
+
+      let contentToUse = rawContent.trim()
+      if (contentToUse && !usedStream) {
         setMessages((prev) =>
           prev.map((msg) => (msg.id === aiMessageId ? { ...msg, text: contentToUse } : msg)),
         )
@@ -483,12 +521,19 @@ export default function AppChat() {
     const filesToSend = [...attachedFiles]
     setInputValue('')
     setAttachedFiles([])
+    const resolvedPreset =
+      activePreset ||
+      Object.keys(presets).find(
+        (k) => k.toLowerCase() === messageText.trim().split(/\s+/)[0]?.toLowerCase(),
+      ) ||
+      null
     const userMessage: ChatMessage = {
       id: Date.now(),
-      text: messageText || (filesToSend.length > 0 ? 'Sent files' : ''),
+      text: messageText || (filesToSend.length > 0 ? 'Attached files' : ''),
       sender: 'user',
       timestamp: new Date(),
       images: filesToSend.map((f) => f.dataUrl),
+      presetName: resolvedPreset,
     }
     setMessages((prev) => [...prev, userMessage])
     conversationContext.current = [
@@ -503,304 +548,482 @@ export default function AppChat() {
   }
 
   const formatTime = (date: Date) =>
-    date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+    date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
-  const titleBar = (
-    <div className="chat-title-bar">
-      <span className="chat-title-text">PROXY X</span>
-      <div className="chat-title-actions">
-        <Link to="/" className="chat-title-link">
-          Home
+  const copyMessage = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const presetNames = Object.keys(presets).sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: 'base' }),
+  )
+  const displayState = activePreset || 'Default'
+  const showSuggestions = messages.length > 0 && !isLoading
+
+  const rail = (
+    <nav className="app-rail" aria-label="Main">
+      <Link to="/" className="app-rail-brand" aria-label="PROXY home" title="Home">
+        <BrandMark inverted className="h-6 w-6" />
+      </Link>
+      <div className="app-rail-nav">
+        <button
+          type="button"
+          className={`app-rail-btn${mainTab === 'chat' ? ' is-active' : ''}`}
+          aria-label="Chat"
+          title="Chat"
+          aria-current={mainTab === 'chat' ? 'page' : undefined}
+          onClick={() => setMainTab('chat')}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className={`app-rail-btn${mainTab === 'states' ? ' is-active' : ''}`}
+          aria-label="States"
+          title="States"
+          aria-current={mainTab === 'states' ? 'page' : undefined}
+          onClick={() => setMainTab('states')}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+            <rect x="3" y="3" width="7" height="7" rx="1.5" />
+            <rect x="14" y="3" width="7" height="7" rx="1.5" />
+            <rect x="3" y="14" width="7" height="7" rx="1.5" />
+            <rect x="14" y="14" width="7" height="7" rx="1.5" />
+          </svg>
+        </button>
+        <Link to="/account" className="app-rail-btn" aria-label="Settings" title="Settings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
         </Link>
+      </div>
+      <div className="app-rail-footer">
+        <Link to="/account" className="app-rail-avatar" aria-label="Profile" title="Profile">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+            <circle cx="12" cy="8" r="3.5" />
+            <path d="M5 21a7 7 0 0 1 14 0" />
+          </svg>
+        </Link>
+      </div>
+    </nav>
+  )
+
+  const statesPanel = (
+    <aside className="chat-states-panel" aria-label="States">
+      <p className="chat-states-drawer-title">States</p>
+      {presetNames.length === 0 ? (
+        <p className="chat-sidebar-empty">
+          No synced states yet. Add states in the desktop app while signed in. They will show up here.
+        </p>
+      ) : (
+        <>
+          <input
+            className="chat-states-search"
+            type="search"
+            value={statesQuery}
+            onChange={(e) => setStatesQuery(e.target.value)}
+            placeholder="Search states"
+            aria-label="Search states"
+          />
+          <div className="chat-preset-list" role="listbox">
+            <button
+              type="button"
+              role="option"
+              aria-selected={!activePreset}
+              className={`chat-preset-item${!activePreset ? ' is-active' : ''}`}
+              onClick={() => setActivePreset(null)}
+            >
+              Default
+            </button>
+            {presetNames
+              .filter((name) => name.toLowerCase().includes(statesQuery.trim().toLowerCase()))
+              .map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  role="option"
+                  aria-selected={activePreset === name}
+                  className={`chat-preset-item${activePreset === name ? ' is-active' : ''}`}
+                  title={presets[name]?.description || name}
+                  onClick={() => setActivePreset(name)}
+                >
+                  {name}
+                </button>
+              ))}
+          </div>
+        </>
+      )}
+    </aside>
+  )
+
+  const header = (
+    <header className="chat-header">
+      <div className="chat-header-left">
+        <label className="chat-state-select-wrap">
+          <span className="chat-header-label">State</span>
+          <select
+            className="chat-state-select"
+            value={activePreset || ''}
+            onChange={(e) => setActivePreset(e.target.value || null)}
+            aria-label="Active state"
+          >
+            <option value="">Default</option>
+            {presetNames.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="chat-header-actions">
         {user ? (
-          <>
-            <span className="chat-title-link" style={{ cursor: 'default' }}>
-              {user.email}
-            </span>
-            <button type="button" className="chat-title-ghost" onClick={() => void openPortal()} disabled={portalLoading}>
-              {portalLoading ? 'Billing…' : 'Billing'}
-            </button>
-            <button type="button" className="chat-title-ghost" onClick={handleSwitchAccount}>
-              Switch account
-            </button>
-            <button type="button" className="chat-title-ghost" onClick={() => void signOut({ returnTo: `${window.location.origin}/app` })}>
-              Sign out
-            </button>
-          </>
+          <button
+            type="button"
+            className="chat-header-signout"
+            onClick={() => void signOut({ returnTo: `${window.location.origin}/app` })}
+          >
+            Sign out
+          </button>
         ) : null}
+        <div className="chat-header-menu">
+          <button
+            type="button"
+            className="chat-header-icon-btn"
+            aria-label="More"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+              <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none" />
+              <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+              <circle cx="12" cy="19" r="1" fill="currentColor" stroke="none" />
+            </svg>
+          </button>
+          {menuOpen ? (
+            <div className="chat-header-menu-panel">
+              <Link to="/" onClick={() => setMenuOpen(false)}>
+                Home
+              </Link>
+              <Link to="/account" onClick={() => setMenuOpen(false)}>
+                Account
+              </Link>
+              {user ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      void openPortal()
+                    }}
+                    disabled={portalLoading}
+                  >
+                    {portalLoading ? 'Billing…' : 'Billing'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      handleSwitchAccount()
+                    }}
+                  >
+                    Switch account
+                  </button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </header>
+  )
+
+  const shell = (body: ReactNode) => (
+    <div className="chat-view">
+      {rail}
+      <div className="app-main">
+        {header}
+        {body}
       </div>
     </div>
   )
 
   if (authLoading) {
-    return (
-      <div className="chat-view">
-        {titleBar}
-        <div className="chat-auth-container">
-          <div className="chat-auth-content">
-            <div className="chat-loading-spinner" />
-            <p>Checking authentication...</p>
-          </div>
+    return shell(
+      <div className="chat-auth-container">
+        <div className="chat-auth-content">
+          <div className="chat-loading-spinner" />
+          <p>Checking whether you’re signed in…</p>
         </div>
-      </div>
+      </div>,
     )
   }
 
   if (!user) {
-    return (
-      <div className="chat-view">
-        {titleBar}
-        <div className="chat-auth-container">
-          <div className="chat-auth-content">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="7" r="4" />
-              <path d="M5.5 21a8.38 8.38 0 0 1 13 0" />
-            </svg>
-            <h2>Sign in to continue</h2>
-            <p>Please log in to use PROXY X on the web</p>
-            <button className="chat-login-button" type="button" onClick={() => void startSignIn()}>
-              Sign In
-            </button>
-          </div>
+    return shell(
+      <div className="chat-auth-container">
+        <div className="chat-auth-content">
+          <BrandMark inverted className="h-12 w-12" />
+          <h2>Sign in to PROXY Web</h2>
+          <p>Sign in with your PROXY account to send messages in the browser.</p>
+          <button className="chat-login-button" type="button" onClick={() => void startSignIn()}>
+            Sign in
+          </button>
         </div>
-      </div>
+      </div>,
     )
   }
 
   if (subscriptionRequired) {
-    return (
-      <div className="chat-view">
-        {titleBar}
-        <div className="chat-auth-container">
-          <div className="chat-auth-content">
-            <h2>Subscription required</h2>
-            <p>Please subscribe to continue using AI features.</p>
-            <button
-              className="chat-login-button"
-              type="button"
-              onClick={() => void startCheckout(stripePlans.monthly)}
-              disabled={checkoutLoading || !stripePlans.monthly}
-            >
-              {checkoutLoading ? 'Opening Checkout...' : 'Subscribe (Monthly)'}
-            </button>
-            <button
-              className="chat-login-button"
-              type="button"
-              onClick={() => void startCheckout(stripePlans.yearly)}
-              disabled={checkoutLoading || !stripePlans.yearly}
-              style={{ marginTop: 10 }}
-            >
-              {checkoutLoading ? 'Opening Checkout...' : 'Subscribe (Yearly)'}
-            </button>
-            <button
-              className="chat-close-button"
-              type="button"
-              onClick={async () => {
-                try {
-                  await convex.current.action(api.account.syncMySubscription, {})
-                } catch (err) {
-                  console.error('syncMySubscription failed:', err)
-                }
-                setSubscriptionRequired(false)
-                await getAIResponse(messages.find((m) => m.sender === 'user')?.text || '')
-              }}
-              style={{ marginTop: 16, width: 'auto', height: 'auto', padding: '8px 12px' }}
-            >
-              I already subscribed (retry)
-            </button>
-          </div>
+    return shell(
+      <div className="chat-auth-container">
+        <div className="chat-auth-content">
+          <h2>Active plan required</h2>
+          <p>Subscribe on the billing page to chat on PROXY Web and Windows.</p>
+          <button
+            className="chat-login-button"
+            type="button"
+            onClick={() => void startCheckout(stripePlans.monthly)}
+            disabled={checkoutLoading || !stripePlans.monthly}
+          >
+            {checkoutLoading ? 'Opening checkout…' : 'Subscribe monthly'}
+          </button>
+          <button
+            className="chat-login-button"
+            type="button"
+            onClick={() => void startCheckout(stripePlans.yearly)}
+            disabled={checkoutLoading || !stripePlans.yearly}
+          >
+            {checkoutLoading ? 'Opening checkout…' : 'Subscribe yearly'}
+          </button>
+          <button
+            className="chat-close-button"
+            type="button"
+            onClick={async () => {
+              try {
+                await convex.current.action(api.account.syncMySubscription, {})
+              } catch (err) {
+                console.error('syncMySubscription failed:', err)
+              }
+              setSubscriptionRequired(false)
+              await getAIResponse(messages.find((m) => m.sender === 'user')?.text || '')
+            }}
+          >
+            I already have a plan (retry)
+          </button>
         </div>
-      </div>
+      </div>,
     )
   }
 
-  return (
-    <div className="chat-view">
-      {titleBar}
-      <div className="chat-shell">
-        <aside className={`chat-sidebar${statesOpen ? ' is-open' : ''}`} aria-label="States">
+  if (mainTab === 'states') {
+    return shell(statesPanel)
+  }
+
+  return shell(
+    <div className="chat-panel">
+      <div className="chat-messages">
+        {messages.length === 0 ? (
+          <div className="chat-empty">
+            <BrandMark inverted className="h-8 w-8" />
+            <p>Type a message to start chatting in PROXY Web</p>
+          </div>
+        ) : (
+          messages.map((msg) => (
+            <div key={msg.id} className={`message message-${msg.sender}`}>
+              <div className="message-body">
+                <div className="message-bubble">
+                  {msg.sender === 'user' && msg.presetName ? (
+                    <span className="message-preset-indicator">{msg.presetName}</span>
+                  ) : null}
+                  {msg.images && msg.images.length > 0 ? (
+                    <div className="message-images">
+                      {msg.images.map((img, idx) => (
+                        <img key={idx} src={img} alt={`Attachment ${idx + 1}`} className="message-image" />
+                      ))}
+                    </div>
+                  ) : null}
+                  {(msg.text || msg.isStreaming) && (
+                    <div
+                      className={`message-text${
+                        msg.sender === 'ai' && !msg.isStreaming ? ' message-text-markdown' : ''
+                      }${msg.isStreaming ? ' message-text-streaming' : ''}`}
+                    >
+                      {msg.sender === 'ai' && !msg.isStreaming ? (
+                        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+                          {normalizeAiMarkdown(msg.text || '')}
+                        </ReactMarkdown>
+                      ) : (
+                        msg.text
+                      )}
+                      {msg.isStreaming ? <span className="streaming-cursor">▋</span> : null}
+                    </div>
+                  )}
+                </div>
+                <div className="message-meta">
+                  {msg.sender === 'ai' && !msg.isStreaming ? (
+                    <div className="message-actions">
+                      <button
+                        type="button"
+                        className="message-action-btn"
+                        aria-label="Copy"
+                        onClick={() => void copyMessage(msg.text)}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+                          <rect x="9" y="9" width="13" height="13" rx="2" />
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className={`message-action-btn${messageFeedback[msg.id] === 'up' ? ' is-active' : ''}`}
+                        aria-label="Thumbs up"
+                        onClick={() =>
+                          setMessageFeedback((prev) => ({
+                            ...prev,
+                            [msg.id]: prev[msg.id] === 'up' ? undefined : 'up',
+                          }))
+                        }
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+                          <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z" />
+                          <path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className={`message-action-btn${messageFeedback[msg.id] === 'down' ? ' is-active' : ''}`}
+                        aria-label="Thumbs down"
+                        onClick={() =>
+                          setMessageFeedback((prev) => ({
+                            ...prev,
+                            [msg.id]: prev[msg.id] === 'down' ? undefined : 'down',
+                          }))
+                        }
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+                          <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3H10z" />
+                          <path d="M17 2h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17" />
+                        </svg>
+                      </button>
+                    </div>
+                  ) : null}
+                  <span className="message-time">{formatTime(msg.timestamp)}</span>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {showSuggestions ? (
+        <div className="chat-suggestions" role="group" aria-label="Suggested follow-ups">
+          {SUGGESTED_PROMPTS.map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              className="chat-suggestion-chip"
+              onClick={() => setInputValue(prompt)}
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {attachedFiles.length > 0 ? (
+        <div className="chat-attachments">
+          {attachedFiles.map((fileData, idx) => (
+            <div key={idx} className="chat-attachment-item">
+              {fileData.type.startsWith('image/') ? (
+                <img src={fileData.dataUrl} alt={fileData.name} className="attachment-preview" />
+              ) : (
+                <div className="attachment-pdf-icon">PDF</div>
+              )}
+              <span className="attachment-name" title={fileData.name}>
+                {fileData.name.length > 15 ? `${fileData.name.substring(0, 15)}...` : fileData.name}
+              </span>
+              <button
+                type="button"
+                className="attachment-remove"
+                onClick={() => setAttachedFiles((prev) => prev.filter((_, i) => i !== idx))}
+                aria-label="Remove attachment"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <form className="chat-input-container" onSubmit={(e) => void handleSubmit(e)}>
+        <input
+          type="file"
+          ref={fileInputRef}
+          className="chat-file-input"
+          accept="image/*,application/pdf"
+          multiple
+          onChange={(e) => void handleFileSelect(e)}
+          aria-label="Attach file"
+        />
+        <div className="chat-input-row">
           <button
             type="button"
-            className={`chat-states-toggle${activePreset ? ' has-active' : ''}`}
-            onClick={() => setStatesOpen((v) => !v)}
-            aria-expanded={statesOpen}
-            title="View states"
+            className="chat-attach-button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isLoading}
+            aria-label="Attach file"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-              <rect x="3" y="4" width="18" height="4" rx="1" />
-              <rect x="3" y="10" width="18" height="4" rx="1" />
-              <rect x="3" y="16" width="18" height="4" rx="1" />
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
             </svg>
-            {statesOpen ? <span>States</span> : null}
           </button>
-          {statesOpen && (
-            <div className="chat-sidebar-panel">
-              {Object.keys(presets).length === 0 ? (
-                <p className="chat-sidebar-empty">
-                  No synced states yet. Add states in the desktop app while signed in — they will appear here.
-                </p>
-              ) : (
-                <>
-                  <label className="chat-states-search-wrap">
-                    <span className="visually-hidden">Search states</span>
-                    <input
-                      className="chat-states-search"
-                      type="search"
-                      value={statesQuery}
-                      onChange={(e) => setStatesQuery(e.target.value)}
-                      placeholder="Search states"
-                    />
-                  </label>
-                  <div className="chat-preset-list" role="listbox" aria-label="States">
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={!activePreset}
-                      className={`chat-preset-item${!activePreset ? ' is-active' : ''}`}
-                      onClick={() => setActivePreset(null)}
-                    >
-                      Default
-                    </button>
-                    {Object.keys(presets)
-                      .filter((name) =>
-                        name.toLowerCase().includes(statesQuery.trim().toLowerCase()),
-                      )
-                      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-                      .map((name) => (
-                        <button
-                          key={name}
-                          type="button"
-                          role="option"
-                          aria-selected={activePreset === name}
-                          className={`chat-preset-item${activePreset === name ? ' is-active' : ''}`}
-                          title={presets[name]?.description || name}
-                          onClick={() => setActivePreset(name)}
-                        >
-                          {name}
-                        </button>
-                      ))}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </aside>
-        <div className="chat-main">
-          <div className="chat-tone-bar" role="tablist" aria-label="Response tone">
-            {TONES.map((tone) => (
-              <button
-                key={tone.id}
-                type="button"
-                role="tab"
-                aria-selected={activeTone === tone.id}
-                className={`chat-tone-pill${activeTone === tone.id ? ' is-active' : ''}`}
-                onClick={() => setActiveTone(tone.id)}
-              >
-                {tone.label}
-              </button>
-            ))}
-          </div>
-          <div className="chat-messages">
-            {messages.length === 0 ? (
-              <div className="chat-empty">Start a conversation...</div>
-            ) : (
-              messages.map((msg) => (
-                <div key={msg.id} className={`message message-${msg.sender}`}>
-                  <div className="message-bubble">
-                    {msg.images && msg.images.length > 0 && (
-                      <div className="message-images">
-                        {msg.images.map((img, idx) => (
-                          <div key={idx} className="message-image-container">
-                            <img src={img} alt={`Attachment ${idx + 1}`} className="message-image" />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {(msg.text || msg.isStreaming) && (
-                      <div className="message-text message-text-markdown">
-                        {msg.sender === 'ai' ? (
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text || ''}</ReactMarkdown>
-                        ) : (
-                          msg.text
-                        )}
-                        {msg.isStreaming && <span className="streaming-cursor">▋</span>}
-                      </div>
-                    )}
-                  </div>
-                  <div className="message-time">{formatTime(msg.timestamp)}</div>
-                </div>
-              ))
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-          {attachedFiles.length > 0 && (
-            <div className="chat-attachments">
-              {attachedFiles.map((fileData, idx) => (
-                <div key={idx} className="chat-attachment-item">
-                  {fileData.type.startsWith('image/') ? (
-                    <img src={fileData.dataUrl} alt={fileData.name} className="attachment-preview" />
-                  ) : (
-                    <div className="attachment-pdf-icon">PDF</div>
-                  )}
-                  <span className="attachment-name" title={fileData.name}>
-                    {fileData.name.length > 15 ? `${fileData.name.substring(0, 15)}...` : fileData.name}
-                  </span>
-                  <button
-                    type="button"
-                    className="attachment-remove"
-                    onClick={() => setAttachedFiles((prev) => prev.filter((_, i) => i !== idx))}
-                    aria-label="Remove attachment"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          <form className="chat-input-container" onSubmit={(e) => void handleSubmit(e)}>
-            <input
-              type="file"
-              ref={fileInputRef}
-              className="chat-file-input"
-              accept="image/*,application/pdf"
-              multiple
-              onChange={(e) => void handleFileSelect(e)}
-              aria-label="Attach file"
-            />
-            <button
-              type="button"
-              className="chat-attach-button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading}
-              aria-label="Attach file"
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-              </svg>
-            </button>
-            <input
-              type="text"
-              className="chat-input-field"
-              placeholder="Ask PROXY X..."
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              disabled={isLoading}
-              autoFocus
-            />
-            <button
-              type="submit"
-              className="chat-input-submit"
-              disabled={(!inputValue.trim() && attachedFiles.length === 0) || isLoading}
-              aria-label="Send message"
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="22" y1="2" x2="11" y2="13" />
-                <polygon points="22 2 15 22 11 13 2 9 22 2" />
-              </svg>
-            </button>
-          </form>
+          <input
+            type="text"
+            className="chat-input-field"
+            placeholder="Message PROXY…"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            disabled={isLoading}
+            autoFocus
+          />
+          <button
+            type="submit"
+            className="chat-input-submit"
+            disabled={(!inputValue.trim() && attachedFiles.length === 0) || isLoading}
+            aria-label="Send message"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M12 19V5M5 12l7-7 7 7" />
+            </svg>
+          </button>
         </div>
-      </div>
-    </div>
+        <label className="chat-input-state">
+          <span className="visually-hidden">State</span>
+          <select
+            className="chat-input-state-select"
+            value={activePreset || ''}
+            onChange={(e) => setActivePreset(e.target.value || null)}
+          >
+            <option value="">{displayState}</option>
+            {presetNames
+              .filter((n) => n !== activePreset)
+              .map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+          </select>
+        </label>
+      </form>
+    </div>,
   )
 }

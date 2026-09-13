@@ -44,14 +44,14 @@ export default function Customize() {
   const [style, setStyle] = useState<StyleMode>('precise')
 
   return (
-    <section id="customize" className="bg-black py-16 text-white md:py-20">
+    <section id="customize" data-nav-tone="dark" className="bg-graphite py-16 text-white md:py-20">
       <div className="page grid items-start gap-10 lg:grid-cols-2 lg:gap-14">
         <Reveal>
-          <p className="eyebrow-dark">Customization</p>
-          <h2 className="display mt-3 font-semibold">See how a preset changes the reply.</h2>
+          <p className="eyebrow-dark">States</p>
+          <h2 className="display mt-3 font-semibold">Preview length, tone, and style.</h2>
           <p className="mt-4 max-w-[42ch] text-lg leading-relaxed text-white/55">
-            These controls match PROXY X’s response preferences: length, tone, and style. Switch them
-            and watch the sample answer update.
+            These controls mirror the kinds of preferences you can bake into a PROXY state. Switch
+            them and watch the sample reply change.
           </p>
 
           <div className="mt-8 grid gap-5">
@@ -86,7 +86,7 @@ export default function Customize() {
         </Reveal>
 
         <Reveal delay={80} className="min-w-0">
-          <ProductPreview length={length} tone={tone} style={style} showOrb={false} />
+          <ProductPreview length={length} tone={tone} style={style} />
         </Reveal>
       </div>
     </section>
